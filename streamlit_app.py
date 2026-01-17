@@ -118,33 +118,60 @@ def calculate_seulsekwon_index(gdf, grid_res=30, max_dist=1000):
     xx, yy = np.meshgrid(x_rng, y_rng)
     grid_points = np.c_[xx.ravel(), yy.ravel()]
     
-    categories = ['cafe', 'gym', 'convenience', 'safety', 'medical', 'life', 'mobility', 'health']
+    # Rarity Weights (Scarcity)
+    rarity = {
+        'cafe': 0.6, 'convenience': 0.6, 'life': 0.8, 'health': 1.0,
+        'mobility': 1.2, 'medical': 2.0, 'safety': 2.0 
+    }
+    
+    mapping = {
+        'cafe': ['cafe'], 'convenience': ['convenience'],
+        'health': ['gym', 'healing', 'park'],
+        'mobility': ['mobility', 'bike'],
+        'medical': ['medical', 'pharmacy', 'hospital'],
+        'safety': ['safety', 'police', 'cctv', 'smartpole'],
+        'life': ['life', 'market', 'admin']
+    }
+    
     score_dict = {}
     
-    for cat in categories:
-        subset = gdf_proj[gdf_proj['type'] == cat]
+    # Pre-filter categories to avoid repeated string matching
+    for cat_key, sub_types in mapping.items():
+        subset = gdf_proj[gdf_proj['type'].isin(sub_types)]
+        
+        # Calculate Density Score
         scores = np.zeros(len(grid_points))
         if not subset.empty:
             coords = np.array(list(zip(subset.geometry.x, subset.geometry.y)))
             tree = KDTree(coords)
-            chunk = 10000
-            for i in range(0, len(grid_points), chunk):
-                pts = grid_points[i:i+chunk]
-                dists, idxs = tree.query(pts, k=1)
+            
+            # Query multiple neighbors (k=15) for density saturation
+            cols = 10000
+            for i in range(0, len(grid_points), cols):
+                pts = grid_points[i:i+cols]
+                # k=15 to capture 'cluster' effect
+                dists, _ = tree.query(pts, k=15) 
                 
+                # Handle single neighbor case (k=1 output shape diff) - not issue here with fixed k=15
+                if dists.ndim == 1: dists = dists.reshape(-1, 1)
+                
+                # Linear Decay Score: 10 pts at 0m -> 0 pts at max_dist
+                # Mask out far items
                 valid_mask = dists < max_dist
-                local_sc = np.zeros(len(dists))
-                close = dists <= 100
-                mid = (dists > 100) & (dists < max_dist)
+                raw_s = np.zeros_like(dists)
+                raw_s[valid_mask] = 10 * (1 - dists[valid_mask]/max_dist)
                 
-                local_sc[close] = 10
-                if np.any(mid):
-                    local_sc[mid] = 10 - 9 * ((dists[mid]-100)/(max_dist-100))
+                # Sum density
+                sum_s = np.sum(raw_s, axis=1)
                 
-                w_factors = subset.iloc[idxs]['weight_factor'].values
-                scores[i:i+chunk] = local_sc * w_factors
+                # Log Saturation: ln(1 + score)
+                # This prevents infinite growth for dense areas (e.g., 50 cafes)
+                sat_s = np.log1p(sum_s)
                 
-        score_dict[f'score_{cat}'] = scores
+                # Apply Rarity Weight
+                scores[i:i+cols] = sat_s * rarity.get(cat_key, 1.0)
+                
+        score_dict[f'score_{cat_key}'] = scores
 
     res_df = pd.DataFrame(grid_points, columns=['x','y'])
     for k, v in score_dict.items(): res_df[k] = v
@@ -177,27 +204,29 @@ with c_p2:
     if st.button("🏠 집순이"): set_weights(2, 1, 3, 1, 1, 1)
 
 st.sidebar.divider()
-st.sidebar.header("⚖️ 상세 가중치 설정")
-w_opts = {k: v for v, k in enumerate([0.0, 1.0, 2.0, 3.0]) for k in [w_keys_list[v]]} # Map Str to Float
+st.sidebar.markdown("### ⚖️ 상세 가중치 설정")
+w_opts = {k: v for v, k in enumerate([0.0, 1.0, 2.0, 3.0]) for k in [w_keys_list[v]]} 
+
 def w_ui(lbl, help_txt, key, def_idx=1): 
     if key not in st.session_state: st.session_state[key] = w_keys_list[def_idx]
     val = st.sidebar.select_slider(lbl, options=w_keys_list, key=key, help=help_txt)
     return w_opts[val]
 
-w_cafe  = w_ui("☕ Food & Cafe", "카페, 디저트", 'k_cafe', 1)
+# Updated Defaults: Cafe/Conv (Low), Safe/Med (High)
+w_cafe  = w_ui("☕ Food & Cafe", "카페, 디저트 (흔함, 가중치 낮음)", 'k_cafe', 1)
 w_health= w_ui("🏋️ Health & Sports", "헬스, 공원", 'k_health', 1)
-w_conv  = w_ui("🏪 Convenience", "편의점, 마트", 'k_conv', 1)
-w_safe  = w_ui("👮 Safety (안전)", "CCTV, 경찰, 스마트폴", 'k_safe', 2)
-w_med   = w_ui("🏥 Medical (의료)", "약국, 병원", 'k_med', 2)
-w_mobil = w_ui("🚲 Mobility (교통)", "따릉이, 지하철", 'k_mobil', 1)
+w_conv  = w_ui("🏪 Convenience", "편의점, 마트 (흔함, 가중치 낮음)", 'k_conv', 1)
+w_safe  = w_ui("👮 Safety (안전)", "CCTV, 경찰 (희소, 가중치 높음)", 'k_safe', 3)
+w_med   = w_ui("🏥 Medical (의료)", "약국, 병원 (희소, 가중치 높음)", 'k_med', 3)
+w_mobil = w_ui("🚲 Mobility (교통)", "따릉이, 지하철", 'k_mobil', 2)
 
 # Sidebar Formula & Legend
 st.sidebar.divider()
 st.sidebar.markdown("### 🧮 분석 방법론 (Methodology)")
 st.sidebar.latex(r'''
-S_{final} = \left( \frac{\sum w_i \cdot s_i}{\sum w_i \cdot 10} \right) \times 100
+S_{cat} = W_{rare} \cdot \ln\left(1 + \sum_{i=1}^{k} \max(0, 10(1 - \frac{d_i}{D_{max}}))\right)
 ''')
-st.sidebar.caption("거리 감쇠(Decay) 및 밀도 기반 100점 환산")
+st.sidebar.caption("희소성 가중치(Rarity) + 로그 포화(Saturation) + 거리 감쇠(Decay)")
 
 # Debug Info
 infra_count = len(st.session_state.infra) if 'infra' in st.session_state else 0
@@ -240,7 +269,7 @@ def get_data(api_mode): return preprocess_data(use_mock=not api_mode)
 @st.cache_data
 def get_estates(): return generate_mock_estate_data()
 @st.cache_data
-def compute_index(_gdf, _rad): return calculate_seulsekwon_index(_gdf, max_dist=_rad)
+def compute_index(_gdf, _rad, _version=1): return calculate_seulsekwon_index(_gdf, max_dist=_rad)
 
 if 'infra' not in st.session_state or st.session_state.get('api_mode') != use_api:
     st.session_state.infra = get_data(use_api)
@@ -251,23 +280,42 @@ if 'infra' not in st.session_state or st.session_state.get('api_mode') != use_ap
 # 3. Main Layout
 st.title("🏙️ 프리미엄 슬세권 분석 & 추천 서비스 (Pro)")
 
-if st.session_state.get('last_rad') != 800:
-    with st.spinner("AI 공간 분석 수행 중..."):
-        st.session_state.grid = compute_index(st.session_state.infra, 800)
+# Check if grid needs update (Radius change or Old Schema)
+required_cols = ['score_health', 'score_mobility', 'score_life']
+current_grid = st.session_state.get('grid', pd.DataFrame())
+is_outdated = current_grid.empty or any(c not in current_grid.columns for c in required_cols)
+
+if st.session_state.get('last_rad') != 800 or is_outdated:
+    with st.spinner("AI 공간 분석 수행 중... (Algorithm Update v2)"):
+        st.session_state.grid = compute_index(st.session_state.infra, 800, _version=2)
         st.session_state.last_rad = 800
 
+# Aggregate Scores (Log-based + Rarity)
 grid = st.session_state.grid.copy()
-# Aggregate Scores
 s_cafe = grid['score_cafe']
-s_health = grid['score_gym'] + grid.get('score_health', 0)
-s_conv = grid['score_convenience'] + grid.get('score_life', 0)
-s_safe = grid['score_safety'] + grid.get('score_smartcase', 0) 
+s_health = grid['score_health']
+s_conv = grid['score_convenience']
+s_life = grid['score_life']
+s_safe = grid['score_safety']
 s_med = grid['score_medical']
-s_mobil = grid.get('score_mobility', 0)
+s_mobil = grid['score_mobility']
 
-num = (s_cafe*w_cafe + s_health*w_health + s_conv*w_conv + s_safe*w_safe + s_med*w_med + s_mobil*w_mobil)
-den = (w_cafe+w_health+w_conv+w_safe+w_med+w_mobil) * 10
-grid['total_score'] = (num / (den if den > 0 else 1)) * 100
+# Calculate Weighted Raw Score
+raw_score = (
+    s_cafe * w_cafe + 
+    s_health * w_health + 
+    (s_conv + s_life) * w_conv + 
+    s_safe * w_safe + 
+    s_med * w_med + 
+    s_mobil * w_mobil
+)
+
+# Normalize to 0-100 (Min-Max Scaling) for maximum differentiation
+min_s, max_s = raw_score.min(), raw_score.max()
+if max_s > min_s:
+    grid['total_score'] = (raw_score - min_s) / (max_s - min_s) * 100
+else:
+    grid['total_score'] = raw_score * 0
 
 estates = st.session_state.estates.copy()
 grid_tree = cKDTree(list(zip(grid.geometry.x, grid.geometry.y)))
