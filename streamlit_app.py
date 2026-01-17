@@ -199,14 +199,23 @@ S_{final} = \left( \frac{\sum w_i \cdot s_i}{\sum w_i \cdot 10} \right) \times 1
 ''')
 st.sidebar.caption("거리 감쇠(Decay) 및 밀도 기반 100점 환산")
 
+# Debug Info
+infra_count = len(st.session_state.infra) if 'infra' in st.session_state else 0
+st.sidebar.caption(f"📡 불러온 인프라 데이터 수: {infra_count:,}개")
+
 st.sidebar.markdown("### 🎨 범례 (Score Legend)")
 st.sidebar.markdown(
     """
-    <div style="background-color: #1E1E1E; padding: 10px; border-radius: 5px; border: 1px solid #333;">
-        <div style="height: 10px; background: linear-gradient(to right, #FFEDA0, #FEB24C, #FD8D3C, #FC4E2A, #BD0026); border-radius: 5px;"></div>
-        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #BBB; margin-top: 4px;">
-            <span>Low (0)</span>
+    <div style="background-color: rgba(255,255,255,0.05); padding: 10px; border-radius: 5px; border: 1px solid #444;">
+        <div style="height: 15px; background: linear-gradient(to right, #00008b, #00ced1, #ffff00, #ff8c00, #ff0000); border-radius: 3px; margin-bottom: 5px;"></div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #DDD;">
+            <span>Basic (0)</span>
             <span>Premium (100)</span>
+        </div>
+        <div style="font-size: 10px; color: #888; margin-top:5px; text-align:center;">
+           <span style="color:#00008b;">●</span> Low 
+           <span style="color:#ffff00;">●</span> Good 
+           <span style="color:#ff0000;">●</span> High
         </div>
     </div>
     """, unsafe_allow_html=True
@@ -222,6 +231,7 @@ st.sidebar.markdown(
     - **Real Estate**: 국토교통부 실거래가
     """
 )
+
 
 # 2. Data Loading & Calc
 @st.cache_data
@@ -278,14 +288,14 @@ with col_map:
     # Map
     m = folium.Map(location=st.session_state.map_center, zoom_start=15, tiles='cartodbdark_matter')
     
-    # 1. Heatmap (Premium Orange-Red Intensity)
+    # Heatmap
     g = grid[grid['total_score']>0].copy()
     g['lat'] = g.geometry.y
     g['lon'] = g.geometry.x
     # Gradient: Pale Yellow -> Orange -> Deep Red
     hm_grad = {0.2: '#FFEDA0', 0.4: '#FEB24C', 0.6: '#FD8D3C', 0.8: '#FC4E2A', 1.0: '#BD0026'}
     HeatMap(g[['lat','lon','total_score']].values.tolist(), 
-            radius=25, blur=20, min_opacity=0.1, max_zoom=13, gradient=hm_grad).add_to(m)
+            radius=25, blur=15, min_opacity=0.1, max_zoom=13, gradient=hm_grad).add_to(m)
     
     # Helper for Distance
     def haversine(lat1, lon1, lat2, lon2):
@@ -296,14 +306,14 @@ with col_map:
         a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
         return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
 
-    # 2. Infra Markers (Clustered & Iconified & Smart Popup)
+    # Infra Markers (Clustered & Iconified & Smart Popup)
     mcs = {
-        'Safety': MarkerCluster(name='Safety (안전)', overlay=True, control=True, show=False),
-        'Medical': MarkerCluster(name='Medical (의료)', overlay=True, control=True, show=False),
-        'Mobility': MarkerCluster(name='Mobility (교통)', overlay=True, control=True, show=False),
-        'Life': MarkerCluster(name='Life (편의)', overlay=True, control=True, show=False),
-        'Cafe': MarkerCluster(name='Cafe (카페)', overlay=True, control=True, show=False),
-        'Health': MarkerCluster(name='Health (운동)', overlay=True, control=True, show=False)
+        'Safety': MarkerCluster(name='Safety (안전)', overlay=True, control=True, show=True),
+        'Medical': MarkerCluster(name='Medical (의료)', overlay=True, control=True, show=True),
+        'Mobility': MarkerCluster(name='Mobility (교통)', overlay=True, control=True, show=True),
+        'Life': MarkerCluster(name='Life (편의)', overlay=True, control=True, show=True),
+        'Cafe': MarkerCluster(name='Cafe (카페)', overlay=True, control=True, show=True),
+        'Health': MarkerCluster(name='Health (운동)', overlay=True, control=True, show=True)
     }
     
     cat_cfg = {
@@ -361,20 +371,6 @@ with col_map:
             
     folium.LayerControl().add_to(m)
             
-    # CSS Legend (Updated Colors)
-    l_html = '''
-    <div style="position: fixed; bottom: 50px; left: 50px; z-index: 1000; 
-                background-color: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; color: white; border: 1px solid grey;">
-        <b>Premium Score Legend</b><br>
-        <div style="margin-top:5px;">
-            <i style="background: #BD0026; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> High (80-100)<br>
-            <i style="background: #FD8D3C; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> Mid (40-79)<br>
-            <i style="background: #FFEDA0; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> Low (0-39)
-        </div>
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(l_html))
-    
     map_data = st_folium(m, height=700, key="map")
 
 with col_right:
