@@ -168,13 +168,31 @@ st.markdown("""
 st.sidebar.header("🛠️ 분석 가중치 설정 (Weights)")
 st.sidebar.info("💡 **나만의 우선순위**에 맞춰 슬라이더를 조절하세요.")
 
-w_cafe = st.sidebar.slider("☕ 카페 (휴식/만남)", 0.0, 3.0, 1.0, 0.1, help="카페, 커피전문점 접근성")
-w_gym = st.sidebar.slider("💪 운동 (자기관리)", 0.0, 3.0, 1.0, 0.1, help="헬스장, 필라테스, 요가 시설")
-w_conv = st.sidebar.slider("🏪 편의점 (간편생활)", 0.0, 3.0, 1.0, 0.1, help="편의점, 다이소 등")
+# Weight Mapping
+weight_options = {
+    '관심 없음 (0)': 0.0,
+    '보통 (1)': 1.0,
+    '중요 (2)': 2.0,
+    '필수 (3)': 3.0
+}
+labels = list(weight_options.keys())
+
+def weight_slider(label, default_idx=1, help_text=""):
+    val = st.sidebar.select_slider(
+        label, 
+        options=labels, 
+        value=labels[default_idx], 
+        help=help_text
+    )
+    return weight_options[val]
+
+w_cafe = weight_slider("☕ 카페 (휴식/만남)", 1, "카페, 커피전문점 접근성")
+w_gym = weight_slider("💪 운동 (자기관리)", 1, "헬스장, 필라테스, 요가 시설")
+w_conv = weight_slider("🏪 편의점 (간편생활)", 1, "편의점, 다이소 등")
 st.sidebar.markdown("---")
-w_safe = st.sidebar.slider("👮 치안/안전 (필수)", 0.0, 3.0, 1.5, 0.1, help="CCTV, 지구대, 파출소 등 안전 시설")
-w_med = st.sidebar.slider("🏥 의료 (건강)", 0.0, 3.0, 1.2, 0.1, help="약국, 내과, 이비인후과 등 1차 의료기관")
-w_life = st.sidebar.slider("🧺 생활지원 (편의)", 0.0, 3.0, 1.0, 0.1, help="코인빨래방, 세탁소, 무인택배함")
+w_safe = weight_slider("👮 치안/안전 (필수)", 2, "CCTV, 지구대, 파출소 등 안전 시설") # Default Priority
+w_med = weight_slider("🏥 의료 (건강)", 2, "약국, 내과, 이비인후과 등 1차 의료기관") 
+w_life = weight_slider("🧺 생활지원 (편의)", 1, "코인빨래방, 세탁소, 무인택배함")
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ 분석 설정")
