@@ -357,4 +357,4 @@ with col_stat:
                      title="가격 대비 가치 (Value Analysis)")
     st.plotly_chart(fig, use_container_width=True)
     
-    st.caption(f"Data Source: 서울 열린데이터 광장 (API Key: {API_KEY[:5]}***), 국토부 실거래가")
+    st.caption("Data Source: 소상공인시장진흥공단(상권), 서울 열린데이터 광장(공공 인프라), 국토교통부(실거래가) | Powered by Antigravity")
