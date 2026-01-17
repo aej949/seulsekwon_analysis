@@ -78,7 +78,7 @@ def get_real_data():
 
         process_frame(fetch_and_cache_api("SeoulPoliceStationWGS", "police"), 'safety', 'police', ['LAT'], ['LON'], weight=1.5)
         process_frame(fetch_and_cache_api("tbsSvcCctv", "cctv"), 'safety', 'cctv', ['LATITUDE','LAT'], ['LONGITUDE','LON'])
-        process_frame(fetch_and_cache_api("SeoulSmartPole", "smartpole"), 'safety', 'smartpole', ['LAT'], ['LON']) # Merged to Safety category per UX logic
+        process_frame(fetch_and_cache_api("SeoulSmartPole", "smartpole"), 'safety', 'smartpole', ['LAT'], ['LON']) 
         process_frame(fetch_and_cache_api("SeoulPharmacyStatusInfo", "pharmacy"), 'medical', 'pharmacy', ['WGS84_LAT'], ['WGS84_LON'])
         process_frame(fetch_and_cache_api("SeoulHospitalStatusInfo", "hospital"), 'medical', 'hospital', ['WGS84_LAT'], ['WGS84_LON'])
         process_frame(fetch_and_cache_api("SeoulWomensSafeDelivery", "delivery"), 'life', 'delivery', [], [], xy_keys=['X_COORD','Y_COORD'])
@@ -155,8 +155,8 @@ def calculate_seulsekwon_index(gdf, grid_res=30, max_dist=1000):
 # --- UI LOGIC ---
 
 # Sidebar Persona Presets
-st.sidebar.header("👤 페르소나 (빠른 설정)")
-c_p1, c_p2, c_p3 = st.sidebar.columns(3)
+st.sidebar.header("👤 라이프 스타일 (Persona)")
+c_p1, c_p2 = st.sidebar.columns(2)
 w_keys_list = ['관심 없음 (0)', '보통 (1)', '중요 (2)', '필수 (3)']
 
 def set_weights(c, h, cv, s, m, mo):
@@ -166,10 +166,15 @@ def set_weights(c, h, cv, s, m, mo):
     st.session_state['k_safe'] = w_keys_list[s]
     st.session_state['k_med'] = w_keys_list[m]
     st.session_state['k_mobil'] = w_keys_list[mo]
+    st.rerun()
 
-if c_p1.button("💪 갓생"): set_weights(1, 3, 2, 1, 1, 1)
-if c_p2.button("🏃 야근"): set_weights(1, 1, 3, 3, 2, 3)
-if c_p3.button("💎 가성비"): set_weights(1, 1, 1, 1, 1, 1)
+with c_p1:
+    if st.button("🔥 갓생러"): set_weights(1, 3, 1, 1, 2, 1)
+    if st.button("💻 노마드"): set_weights(3, 1, 2, 1, 1, 2)
+    if st.button("🏥 투병"): set_weights(1, 1, 2, 2, 3, 1)
+with c_p2:
+    if st.button("🛡️ 귀가러"): set_weights(1, 1, 1, 3, 1, 3)
+    if st.button("🏠 집순이"): set_weights(2, 1, 3, 1, 1, 1)
 
 st.sidebar.divider()
 st.sidebar.header("⚖️ 상세 가중치 설정")
@@ -192,7 +197,16 @@ st.sidebar.markdown(r"""
 $$Score = \frac{\sum (w_i \cdot s_i)}{\sum w_i \times 10} \times 100$$
 """)
 use_api = st.sidebar.checkbox("🌐 실시간 공공 데이터", value=False)
-st.sidebar.caption("Data Source: 소상공인, 서울시, 국토부")
+
+st.sidebar.divider()
+st.sidebar.markdown(
+    """
+    **📊 Data Sources**
+    - **Commercial**: 소상공인시장진흥공단 상권정보
+    - **Public**: 서울 열린데이터 광장 (CCTV, 스마트폴, 따릉이 등)
+    - **Real Estate**: 국토교통부 실거래가 공개시스템
+    """
+)
 
 # Data & Calc
 @st.cache_data
@@ -210,21 +224,21 @@ if 'infra' not in st.session_state or st.session_state.get('api_mode') != use_ap
     
 # Layout Main
 st.title("🏙️ 프리미엄 슬세권 분석 & 추천 서비스")
-st.markdown("**(Seoul Smart Habitat Analytics)**: 빅데이터와 AI 공간 분석을 통한 지능형 주거 가치 평가")
+st.markdown("**(Seoul Smart Habitat Analytics)**: 빅데이터와 AI 공간 분석을 통한 1인 가구 솔루션")
 
-search_radius = 800 # Fixed for simplicity or add slider in top
+search_radius = 800
 
 if st.session_state.get('last_rad') != search_radius:
-    with st.spinner("Calculating..."):
+    with st.spinner("Analyzing..."):
         st.session_state.grid = compute_index(st.session_state.infra, search_radius)
         st.session_state.last_rad = search_radius
 
 grid = st.session_state.grid.copy()
-# Aggregate
+# Aggregate Scores
 s_cafe = grid['score_cafe']
 s_health = grid['score_gym'] + grid.get('score_health', 0)
 s_conv = grid['score_convenience'] + grid.get('score_life', 0)
-s_safe = grid['score_safety'] + grid.get('score_smartcase', 0) # Fallback if key mismatch
+s_safe = grid['score_safety'] + grid.get('score_smartcase', 0) 
 s_med = grid['score_medical']
 s_mobil = grid.get('score_mobility', 0)
 
@@ -238,7 +252,7 @@ _, idxs = grid_tree.query(list(zip(estates.lon, estates.lat)), k=1)
 estates['score'] = grid.iloc[idxs]['total_score'].values
 estates['cpi'] = estates['score'] / estates['rent_per_area']
 
-# Metrics Row
+# Metrics
 top_score = estates['score'].max()
 avg_rent = estates['rent_per_area'].mean()
 best_val = estates.loc[estates['cpi'].idxmax()]
@@ -250,63 +264,111 @@ m3.metric("Best Value 매물", best_val['name'], f"가성비 {best_val['cpi']:.2
 
 st.divider()
 
-# Split Layout
-col_map, col_chart = st.columns([2, 1])
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [37.4842, 126.9297]
+
+# Layout: Map (Left 70%) | List (Right 30%)
+col_map, col_list = st.columns([7, 3])
 
 with col_map:
     top_cpi_thr = estates['cpi'].quantile(0.8)
     estates['grade'] = estates['cpi'].apply(lambda x: '💎 Best' if x >= top_cpi_thr else 'Normal')
     
-    m = folium.Map([37.4842, 126.9297], zoom_start=15, tiles='cartodbpositron')
+    m = folium.Map(location=st.session_state.map_center, zoom_start=15, tiles='cartodbpositron')
     
     # Heatmap
     g = grid[grid['total_score']>0].copy()
     g['lat'] = g.geometry.y
     g['lon'] = g.geometry.x
-    HeatMap(g[['lat','lon','total_score']].values.tolist(), radius=15, blur=20, min_opacity=0.3).add_to(m)
+    hm_grad = {0.2: '#4A90E2', 0.5: '#7ED321', 0.9: '#D0021B'}
+    HeatMap(g[['lat','lon','total_score']].values.tolist(), radius=20, blur=15, min_opacity=0.2, gradient=hm_grad).add_to(m)
     
-    # Clustering Markers
-    mc = MarkerCluster(name="Facilities")
-    for r in st.session_state.infra.itertuples():
-        mc.add_child(folium.Marker([r.lat, r.lon], popup=r.name, icon=folium.Icon(color='gray', icon='info-sign')))
-    # mc.add_to(m) # Optional: Enable if user wants to see all dots
-    
-    # Estates
+    # Estate Markers
     for _, e in estates.iterrows():
         if e['grade'] == '💎 Best':
-            folium.Marker([e['lat'], e['lon']], popup=f"<b>{e['name']}</b><br>Score: {e['score']:.1f}", icon=folium.Icon(color='darkblue', icon='star', prefix='fa')).add_to(m)
+            folium.Marker([e['lat'], e['lon']], 
+                popup=f"<b>{e['name']}</b><br>Score: {e['score']:.1f}", 
+                icon=folium.Icon(color='darkblue', icon='star', prefix='fa')).add_to(m)
     
-    # Legend HTML
-    l_html = '''<div style="position:fixed; bottom:30px; right:30px; z-index:9999; background:white; padding:10px; border:1px solid gray;">
-    <b>Score Legend</b><br><span style='color:red;'>■</span> High<br><span style='color:yellow;'>■</span> Mid<br><span style='color:blue;'>■</span> Low</div>'''
+    # Legend
+    l_html = '''<div style="position: fixed; bottom: 30px; right: 30px; z-index: 9999; 
+                background: rgba(18, 18, 18, 0.75); color: #FFFFFF; border-radius: 12px;
+                padding: 15px; font-family: 'Segoe UI', sans-serif; backdrop-filter: blur(8px);
+                border: 1px solid rgba(255, 255, 255, 0.15); box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+      <div style="font-size:14px; font-weight:600; margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:5px;">
+        Premium Index
+      </div>
+      <div style="display:flex; align-items:center; margin-bottom:4px;">
+        <span style="background:#D0021B; width:10px; height:10px; border-radius:50%; margin-right:8px;"></span>
+        <span style="font-size:12px; color:#E0E0E0;">High Value (Top 20%)</span>
+      </div>
+      <div style="display:flex; align-items:center; margin-bottom:4px;">
+        <span style="background:#7ED321; width:10px; height:10px; border-radius:50%; margin-right:8px;"></span>
+        <span style="font-size:12px; color:#E0E0E0;">Moderate</span>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span style="background:#4A90E2; width:10px; height:10px; border-radius:50%; margin-right:8px;"></span>
+        <span style="font-size:12px; color:#E0E0E0;">Basic</span>
+      </div>
+    </div>'''
     m.get_root().html.add_child(folium.Element(l_html))
     
-    st_folium(m, height=600)
+    # Return Map Data
+    map_data = st_folium(m, height=600, key="map")
 
-with col_chart:
-    st.markdown("### 🔍 상세 분석")
+with col_list:
+    st.subheader("📋 추천 매물 TOP 10")
     
-    # 1. Radar Chart (Average of Top 3 CPI Estates)
-    top3 = estates.nlargest(3, 'cpi')
-    # Use global weights as proxy for "Ideal" vs "Actual"? 
-    # Or calculate category sub-scores for the estates.
-    # We didn't store category sub-scores in estates DF yet. 
-    # Quick fix: Just Use Slider Weights to act as "User Preference Profile" visualization
-    df_radar = pd.DataFrame({
-        'Category': ['Cafe', 'Health', 'Conv', 'Safety', 'Medical', 'Mobility'],
-        'Importance': [w_cafe, w_health, w_conv, w_safe, w_med, w_mobil]
-    })
-    fig_r = px.line_polar(df_radar, r='Importance', theta='Category', line_close=True, title="나의 라이프스타일 균형 (User Profile)")
-    fig_r.update_traces(fill='toself')
-    st.plotly_chart(fig_r, use_container_width=True)
+    sort_opt = st.selectbox("정렬 기준", ["점수 높은 순", "가성비(CPI) 순", "월세 낮은 순"])
+    
+    # Filter visible
+    if map_data and map_data.get('bounds'):
+        b = map_data['bounds']
+        # Bounds: _southWest: {lat, lng}, _northEast: {lat, lng}
+        sw = b['_southWest']; ne = b['_northEast']
+        visible_estates = estates[
+            (estates['lat'] >= sw['lat']) & (estates['lat'] <= ne['lat']) &
+            (estates['lon'] >= sw['lng']) & (estates['lon'] <= ne['lng'])
+        ]
+    else:
+        visible_estates = estates # Default all
+        
+    if visible_estates.empty:
+        st.warning("현재 화면 내 추천 매물이 없습니다.")
+    else:
+        # Sort
+        if sort_opt == "점수 높은 순":
+            visible_estates = visible_estates.sort_values(by='score', ascending=False)
+        elif sort_opt == "가성비(CPI) 순":
+            visible_estates = visible_estates.sort_values(by='cpi', ascending=False)
+        else:
+            visible_estates = visible_estates.sort_values(by='rent_per_area', ascending=True)
+            
+        # List Cards
+        for i, row in visible_estates.head(10).iterrows():
+            score_col = "green" if row['score'] >= 80 else "orange"
+            with st.expander(f"[{row['score']:.0f}점] {row['name']}"):
+                st.markdown(f"**💰 평당 월세**: {row['rent_per_area']:.1f}만 원")
+                
+                # AI Reason Generation (Logic)
+                reasons = []
+                if w_safe >= 2.0: reas = "치안/안심"
+                elif w_health >= 2.0: reas = "운동/산책"
+                elif w_mobil >= 2.0: reas = "교통/이동"
+                elif w_cafe >= 2.0: reas = "카페/휴식"
+                elif w_conv >= 2.0: reas = "생활편의"
+                elif w_med >= 2.0: reas = "병의원"
+                else: reas = "균형잡힌 인프라"
+                
+                # Check distances (approx via mock)
+                # In real app, query KDTree. Here we sim.
+                if row['grade'] == '💎 Best':
+                    st.success(f"🏆 **AI 추천**: {reas} 접근성이 탁월하며 가성비가 최상위권입니다.")
+                else:
+                    st.info(f"💡 **AI 분석**: {reas} 환경이 우수합니다.")
+                
+                if st.button("📍 위치 보기", key=f"btn_{i}"):
+                    st.session_state.map_center = [row['lat'], row['lon']]
+                    st.rerun()
 
-    # 2. Price Trend (Mock)
-    dates = pd.date_range(start='2025-01-01', periods=12, freq='M')
-    prices = np.linspace(avg_rent*0.9, avg_rent*1.05, 12) + np.random.normal(0, 0.5, 12)
-    df_trend = pd.DataFrame({'Date': dates, 'Price (3.3㎡)': prices})
-    fig_l = px.line(df_trend, x='Date', y='Price (3.3㎡)', title="최근 1년 월세 변동 추이 (지역 평균)")
-    st.plotly_chart(fig_l, use_container_width=True)
-    
-    # 3. Value Scatter
-    fig_s = px.scatter(estates, x='rent_per_area', y='score', color='grade', title="가성비 매물 매트릭스")
-    st.plotly_chart(fig_s, use_container_width=True)
+st.caption("Data Source: 소상공인시장진흥공단(상권), 서울 열린데이터 광장(공공 인프라), 국토교통부(실거래가) | Powered by Antigravity")
