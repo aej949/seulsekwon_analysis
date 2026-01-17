@@ -221,6 +221,16 @@ st.sidebar.header("🔍 분석 범위 설정")
 search_radius = st.sidebar.slider("탐색 반경", 100, 1000, 800, 100, format="%d m")
 use_api = st.sidebar.checkbox("🌐 실시간 공공 데이터 연동", value=False)
 
+st.sidebar.divider()
+st.sidebar.markdown(
+    """
+    **📊 Data Sources**
+    - **Commercial**: 소상공인시장진흥공단 상권정보
+    - **Public**: 서울 열린데이터 광장 (CCTV, 스마트폴, 따릉이 등)
+    - **Real Estate**: 국토교통부 실거래가 공개시스템
+    """
+)
+
 # Logic
 @st.cache_data
 def get_data(api_mode): return preprocess_data(use_mock=not api_mode)
