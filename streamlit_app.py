@@ -35,7 +35,17 @@ w_life = st.sidebar.slider("🧺 생활지원 (편의)", 0.0, 3.0, 1.0, 0.1, hel
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ 분석 설정")
-grid_res = st.sidebar.slider("격자 해상도 (미터)", 20, 100, 30, help="격자가 작을수록 더 정밀하게 분석합니다.")
+search_radius = st.sidebar.slider("최대 탐색 거리 (Radius)", 100, 2000, 800, 100, format="%d m", help="설정된 거리 이내의 시설만 점수에 반영되며, 가까울수록 가산점이 붙습니다.")
+grid_res = st.sidebar.slider("격자 해상도 (미터)", 20, 100, 30, format="%d m", help="격자가 작을수록 더 정밀하게 분석합니다 (연산 속도 주의).")
+
+st.sidebar.markdown("### 🧮 점수 산출 공식 (Decay Function)")
+st.sidebar.latex(r"""
+Score(d) = \begin{cases} 
+10 & d \le 100m \\ 
+10 - 9 \times \frac{d-100}{Limit-100} & 100m < d < Limit \\ 
+0 & d \ge Limit 
+\end{cases}
+""")
 
 # --- Data Loading (Cached) ---
 # Import definitions to avoid cache issues
@@ -48,8 +58,8 @@ def load_real_estate():
     return generate_mock_estate_data(n_samples=200)
 
 @st.cache_data
-def calculate_base_scores(_gdf, resolution):
-    return calculate_seulsekwon_index(_gdf, grid_res_meters=resolution)
+def calculate_base_scores(_gdf, resolution, limit):
+    return calculate_seulsekwon_index(_gdf, grid_res_meters=resolution, max_dist=limit)
 
 # --- Session State Data Management ---
 if 'infra_gdf' not in st.session_state:
@@ -57,11 +67,13 @@ if 'infra_gdf' not in st.session_state:
         st.session_state.infra_gdf = load_infrastructure()
         st.session_state.estate_df = load_real_estate()
         st.session_state.last_grid_res = None
+        st.session_state.last_radius = None
 
-if st.session_state.get('last_grid_res') != grid_res:
-    with st.spinner(f'공간 인덱스 재계산 중... ({grid_res}m 단위)'):
-        st.session_state.grid_gdf_base = calculate_base_scores(st.session_state.infra_gdf, grid_res)
+if st.session_state.get('last_grid_res') != grid_res or st.session_state.get('last_radius') != search_radius:
+    with st.spinner(f'공간 인덱스 재계산 중... ({grid_res}m, 반경 {search_radius}m)'):
+        st.session_state.grid_gdf_base = calculate_base_scores(st.session_state.infra_gdf, grid_res, search_radius)
         st.session_state.last_grid_res = grid_res
+        st.session_state.last_radius = search_radius
 
 infra_gdf = st.session_state.infra_gdf
 estate_df = st.session_state.estate_df
@@ -119,6 +131,7 @@ col1, col2 = st.columns([2, 1])
 with col1:
     st.subheader("🗺️ 통합 슬세권 지수 히트맵")
     st.caption("🔴 붉을수록 인프라 밀집도가 높음 | 🔵 푸른점: 가성비 추천 매물 (평당 월세 기준)")
+    show_reco_only = st.checkbox("💎 가성비 추천 매물만 보기", value=True)
     
     mean_lat, mean_lon = infra_gdf.geometry.y.mean(), infra_gdf.geometry.x.mean()
     m = folium.Map(location=[mean_lat, mean_lon], zoom_start=15, tiles='cartodbpositron')
@@ -171,25 +184,46 @@ with col1:
     # 3. Estate Markers (Only Recommendations or High Value)
     recommended = estate_df[estate_df['category'] == '💎 숨은 명당 (강력 추천)']
     
-    for idx, row in recommended.iterrows():
-        # Tooltip with Standardized Price
+    # 3. Estate Markers
+    # Filter based on user selection
+    if show_reco_only:
+        estates_to_plot = recommended
+    else:
+        estates_to_plot = estate_df
+        
+    for idx, row in estates_to_plot.iterrows():
+        is_reco = row['category'] == '💎 숨은 명당 (강력 추천)'
+        
+        # Tooltip with Standardized Price & 6 Pyeong Estimate
         tooltip_html = f"""
-        <div style='font-family:sans-serif; width:180px'>
-            <b>💎 {row['name']}</b><hr style='margin:5px 0'>
+        <div style='font-family:sans-serif; width:200px'>
+            <b>{'💎 ' if is_reco else ''}{row['name']}</b><hr style='margin:5px 0'>
             ✅ <b>종합 점수</b>: {row['seulsekwon_score']:.1f}점<br>
             💰 <b>평당 월세</b>: {row['rent_per_area']:.1f}만원<br>
-            <span style='color:blue; font-size:0.8em'>*전용면적 3.3㎡(1평) 기준</span><br>
+            🏠 <b>예상 월세(6평)</b>: {row['rent_per_area']*6:.1f}만원<br>
             <br>
             🛡️ 안전 점수: {row['score_safety']:.1f}<br>
             🏥 의료 접근: {row['score_medical']:.1f}
         </div>
         """
         
-        folium.Marker(
-            location=[row['lat'], row['lon']],
-            popup=folium.Popup(tooltip_html, max_width=250),
-            icon=folium.Icon(color='darkblue', icon='star', prefix='fa')
-        ).add_to(m)
+        if is_reco:
+            folium.Marker(
+                location=[row['lat'], row['lon']],
+                popup=folium.Popup(tooltip_html, max_width=250),
+                icon=folium.Icon(color='darkblue', icon='star', prefix='fa')
+            ).add_to(m)
+        else:
+            # Standard marker (smaller, gray)
+            folium.CircleMarker(
+                location=[row['lat'], row['lon']],
+                radius=5,
+                color='gray',
+                fill=True, 
+                fill_color='gray',
+                fill_opacity=0.6,
+                popup=folium.Popup(tooltip_html, max_width=250)
+            ).add_to(m)
         
     folium.LayerControl().add_to(m)
     st_folium(m, width="100%", height=600)
