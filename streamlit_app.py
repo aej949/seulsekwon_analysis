@@ -118,6 +118,7 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("🗺️ 통합 슬세권 지수 히트맵")
+    st.caption("🔴 붉을수록 인프라 밀집도가 높음 | 🔵 푸른점: 가성비 추천 매물 (평당 월세 기준)")
     
     mean_lat, mean_lon = infra_gdf.geometry.y.mean(), infra_gdf.geometry.x.mean()
     m = folium.Map(location=[mean_lat, mean_lon], zoom_start=15, tiles='cartodbpositron')
@@ -171,9 +172,22 @@ with col1:
     recommended = estate_df[estate_df['category'] == '💎 숨은 명당 (강력 추천)']
     
     for idx, row in recommended.iterrows():
+        # Tooltip with Standardized Price
+        tooltip_html = f"""
+        <div style='font-family:sans-serif; width:180px'>
+            <b>💎 {row['name']}</b><hr style='margin:5px 0'>
+            ✅ <b>종합 점수</b>: {row['seulsekwon_score']:.1f}점<br>
+            💰 <b>평당 월세</b>: {row['rent_per_area']:.1f}만원<br>
+            <span style='color:blue; font-size:0.8em'>*전용면적 3.3㎡(1평) 기준</span><br>
+            <br>
+            🛡️ 안전 점수: {row['score_safety']:.1f}<br>
+            🏥 의료 접근: {row['score_medical']:.1f}
+        </div>
+        """
+        
         folium.Marker(
             location=[row['lat'], row['lon']],
-            popup=f"<b>💎 추천 매물</b><br>{row['name']}<br>점수: {row['seulsekwon_score']:.1f}점<br>월세: {row['rent_per_area']:.1f}만원",
+            popup=folium.Popup(tooltip_html, max_width=250),
             icon=folium.Icon(color='darkblue', icon='star', prefix='fa')
         ).add_to(m)
         
@@ -184,14 +198,14 @@ with col2:
     st.subheader("📊 매물 추천 및 분석")
     
     st.markdown("#### 🏆 BEST 3 숨은 명당")
-    st.caption("해당 지역 상위 20% 점수이면서 임대료는 하위 40%인 알짜 매물입니다.")
+    st.caption("해당 지역 상위 20% 점수이면서 **평당 임대료**는 하위 40%인 알짜 매물입니다.")
     
     if not recommended.empty:
         top3 = recommended.nlargest(3, 'seulsekwon_score')
         for i, row in top3.iterrows():
             st.success(f"**{row['name']}**\n"
                        f"- 종합 점수: **{row['seulsekwon_score']:.1f}점**\n"
-                       f"- 월세 지표: **{row['rent_per_area']:.1f}**\n"
+                       f"- 평당 월세: **{row['rent_per_area']:.1f}만 원** (3.3㎡ 기준)\n"
                        f"- ✨ **강점**: 안전({row['score_safety']:.1f}), 의료({row['score_medical']:.1f})")
     else:
         st.warning("조건에 맞는 '숨은 명당'이 없습니다. 가중치를 조절해보세요.")
@@ -201,15 +215,26 @@ with col2:
     # Scatter Plot
     scatter = alt.Chart(estate_df).mark_circle(size=80).encode(
         x=alt.X('seulsekwon_score', title='통합 슬세권 지수 (점수)'),
-        y=alt.Y('rent_per_area', title='전용면적당 임대료 (단위:만원)'),
+        y=alt.Y('rent_per_area', title='평당 월세 (단위: 만원/3.3㎡)'),
         color=alt.Color('category', legend=alt.Legend(title="매물 등급")),
         tooltip=[alt.Tooltip('name', title='매물명'), 
                  alt.Tooltip('seulsekwon_score', title='종합점수', format='.1f'), 
-                 alt.Tooltip('rent_per_area', title='임대료', format='.1f'), 
+                 alt.Tooltip('rent_per_area', title='평당월세', format='.1f'), 
                  alt.Tooltip('category', title='등급')]
     ).interactive()
     st.altair_chart(scatter, use_container_width=True)
     
     # Correlation
     corr = estate_df['seulsekwon_score'].corr(estate_df['rent_per_area'])
-    st.info(f"💡 점수와 임대료의 상관계수: **{corr:.2f}**")
+    st.info(f"💡 점수와 임대료(평당)의 상관계수: **{corr:.2f}**")
+    
+    # Footer Source
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: right; color: gray; font-size: 0.8em;'>
+    <b>데이터 출처 (Source)</b><br>
+    - 상권 정보: 소상공인시장진흥공단 (2025.12 기준)<br>
+    - 실거래가: 국토교통부 실거래가 공개시스템 (최근 1년치)<br>
+    * 본 서비스의 임대료는 전용면적 3.3㎡(1평)당 환산 월세입니다.
+    </div>
+    """, unsafe_allow_html=True)
