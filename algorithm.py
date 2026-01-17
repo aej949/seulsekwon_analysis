@@ -53,102 +53,34 @@ def calculate_seulsekwon_index(gdf, grid_res_meters=20):
     
     print(f"Generated grid with {len(grid_points)} points.")
     
-    # Initialize total score
-    total_scores = np.zeros(len(grid_points))
-    
-    # Categories
-    categories = ['cafe', 'gym', 'convenience']
-    
-    for cat in categories:
-        subset = gdf_proj[gdf_proj['type'] == cat]
-        if len(subset) == 0:
-            continue
-            
-        data_points = np.array(list(zip(subset.geometry.x, subset.geometry.y)))
-        
-        # Build KDTree
-        tree = KDTree(data_points)
-        
-        # Query: We only care about points within 1000m
-        # query_ball_point matches all points within radius, but for scoring "density",
-        # usually we want to know ANY valid point nearby or sum of impacts?
-        # The prompt implies: "Summing [Cafe Score + Gym Score + Conv Score]".
-        # And "Points within radius".
-        # If there are MULTIPLE cafes, do we sum them? 
-        # "100m 이내는 10점" -> Usually implies distance to the NEAREST, or sum of influences?
-        # "Weighted sum of distances" usually implies Gravity Model.
-        # But here it says "Score function S(d)". S(d) usually applies to a single relation.
-        # "KDTree... find points in radius... score function".
-        # If I have 10 cafes within 100m, is my score 100? Or just 10 (availability)?
-        # "Target: Cafe, Gym, Convenience".
-        # Usually Seulsekwon is about "Availability". 
-        # But "Scoring" often implies summing multiple amenities.
-        # Let's assume we sum the scores of ALL amenities within range to show "density" and "convenience".
-        # However, finding ALL neighbors for ALL grid points can be heavy if dense.
-        # Let's try 'query' for k=nearest first to see standard 'access' score?
-        # Re-reading: "Summing [Cafe Score + Gym Score + Conv Score]".
-        # It likely means the score for the CATEGORY.
-        # Typically: Score(Cafe) = Score(Nearest Cafe) OR Sum(Score(All Cafes)).
-        # Given "Real estate value" and "Infrastructure amount", Sum(Score(All)) makes sense for density.
-        # But standard walkability is usually "Distance to nearest".
-        # Let's implement Sum of Scores from ALL amenities within 1km.
-        # This highlights "cluster" areas better than just "nearest".
-        
-        # To do this efficiently with KDTree for all grid points:
-        # tree.query_ball_point(grid_points, r=1000) returns indices.
-        
-        print(f"Calculating scores for {cat}...")
-        
-        # Batch processing to avoid memory issues
-        chunk_size = 10000
-        category_scores = np.zeros(len(grid_points))
-        
-        for i in range(0, len(grid_points), chunk_size):
-            chunk = grid_points[i:i+chunk_size]
-            
-            # Hybrid approach for speed/demo:
-            # We use nearest 1 neighbor for simplicity in this demo as per "S(d)" singular function implication
-            # Ideally for density we might sum multiple, but let's stick to Distance Decay to nearest facility
-            # as it aligns well with "How far is the nearest X?"
-            
-            dists, _ = tree.query(chunk, k=1) # Nearest neighbor
-            
-            # Calculate score for these distances
-            s = score_function(dists)
-            category_scores[i:i+chunk_size] = s
-            
-        # Store individual category scores
-        total_scores = total_scores + category_scores # Keep total for backward compatibility if needed, or just new cols
-        
-        # We will add columns dynamically
-        
-    # Create result dataframe
-    result_df = pd.DataFrame(grid_points, columns=['x', 'y'])
-    
-    # Rerun logic to attach columns properly (iterating again or storing in dict above would be cleaner but let's just do it sequentially or fix logic)
-    # Refactoring slightly for cleanliness:
+    # Categories for Advanced Analysis
+    categories = ['cafe', 'gym', 'convenience', 'safety', 'medical', 'life']
     
     score_dict = {}
+    chunk_size = 10000
     
     for cat in categories:
         subset = gdf_proj[gdf_proj['type'] == cat]
         scores = np.zeros(len(grid_points))
         
         if len(subset) > 0:
+            print(f"Calculating scores for {cat}...")
             data_points = np.array(list(zip(subset.geometry.x, subset.geometry.y)))
             tree = KDTree(data_points)
             
             for i in range(0, len(grid_points), chunk_size):
                 chunk = grid_points[i:i+chunk_size]
-                dists, _ = tree.query(chunk, k=1)
+                dists, _ = tree.query(chunk, k=1) # Nearest neighbor
                 scores[i:i+chunk_size] = score_function(dists)
+        else:
+            print(f"No data for {cat}, skipping...")
         
         score_dict[f'score_{cat}'] = scores
 
     # Combine into DF
     result_df = pd.DataFrame(grid_points, columns=['x', 'y'])
-    for cat, s in score_dict.items():
-        result_df[cat] = s
+    for key, s in score_dict.items():
+        result_df[key] = s
         
     # Calculate default total (equal weights)
     result_df['score'] = result_df[[c for c in result_df.columns if 'score_' in c]].sum(axis=1)

@@ -13,191 +13,203 @@ from data_processor import preprocess_data, generate_mock_estate_data
 from algorithm import calculate_seulsekwon_index
 
 # Page Settings
-st.set_page_config(page_title="Seulsekwon Analysis", page_icon="🚶", layout="wide")
+st.set_page_config(page_title="고급 슬세권 분석", page_icon="🚶", layout="wide")
 
 st.markdown("""
-# 🚶 **1인 가구 맞춤형 슬세권 분석 & 매물 가치 평가**
-**"Slippers + Area" Analysis Dashboard**
-서울시 1인 가구 밀집 지역(신림동)을 대상으로 **인프라 점수(슬세권 지수)**를 산출하고, 
-부동산 실거래가와 결합하여 **'가성비 매물'**을 발굴합니다.
+# 🚶 **프리미엄 슬세권 분석 & 추천 서비스**
+**(Advanced Seulsekwon Analytics)**
+서울시 1인 가구 밀집 지역(신림동)을 대상으로 **안전, 의료, 생활 편의**까지 고려한 **'통합 주거 가치'**를 분석합니다.
 """)
 
 # --- Sidebar Controls ---
-st.sidebar.header("🛠️ Analysis Weights")
-st.sidebar.caption("개인 선호도에 따라 가중치를 조절하세요.")
+st.sidebar.header("🛠️ 분석 가중치 설정 (Weights)")
+st.sidebar.info("💡 **나만의 우선순위**에 맞춰 슬라이더를 조절하세요.")
 
-w_cafe = st.sidebar.slider("☕ Cafe Weight", 0.0, 3.0, 1.0, 0.1)
-w_gym = st.sidebar.slider("💪 Fitness Weight", 0.0, 3.0, 1.0, 0.1)
-w_conv = st.sidebar.slider("🏪 Convenience Weight", 0.0, 3.0, 1.0, 0.1)
+w_cafe = st.sidebar.slider("☕ 카페 (휴식/만남)", 0.0, 3.0, 1.0, 0.1, help="카페, 커피전문점 접근성")
+w_gym = st.sidebar.slider("💪 운동 (자기관리)", 0.0, 3.0, 1.0, 0.1, help="헬스장, 필라테스, 요가 시설")
+w_conv = st.sidebar.slider("🏪 편의점 (간편생활)", 0.0, 3.0, 1.0, 0.1, help="편의점, 다이소 등")
+st.sidebar.markdown("---")
+w_safe = st.sidebar.slider("👮 치안/안전 (필수)", 0.0, 3.0, 1.5, 0.1, help="CCTV, 지구대, 파출소 등 안전 시설")
+w_med = st.sidebar.slider("🏥 의료 (건강)", 0.0, 3.0, 1.2, 0.1, help="약국, 내과, 이비인후과 등 1차 의료기관")
+w_life = st.sidebar.slider("🧺 생활지원 (편의)", 0.0, 3.0, 1.0, 0.1, help="코인빨래방, 세탁소, 무인택배함")
 
 st.sidebar.divider()
-st.sidebar.header("⚙️ Grid Settings")
-grid_res = st.sidebar.slider("Grid Resolution (m)", 20, 100, 30)
+st.sidebar.header("⚙️ 분석 설정")
+grid_res = st.sidebar.slider("격자 해상도 (미터)", 20, 100, 30, help="격자가 작을수록 더 정밀하게 분석합니다.")
 
 # --- Data Loading (Cached) ---
+# Import definitions to avoid cache issues
 @st.cache_data
 def load_infrastructure():
     return preprocess_data(file_path='data/small_business_data.csv', use_mock=True)
 
 @st.cache_data
 def load_real_estate():
-    # Mock data for demonstration
-    return generate_mock_estate_data(n_samples=150)
+    return generate_mock_estate_data(n_samples=200)
 
 @st.cache_data
 def calculate_base_scores(_gdf, resolution):
-    # This is the heavy calculation (KDTree)
-    # Returns DataFrame with 'score_cafe', 'score_gym', 'score_conv' separated
     return calculate_seulsekwon_index(_gdf, grid_res_meters=resolution)
 
-# --- Data Management (Session State) ---
-# Check if data needs to be loaded (First run only)
+# --- Session State Data Management ---
 if 'infra_gdf' not in st.session_state:
-    with st.spinner('초기 데이터 로딩 및 분석 중입니다... (최초 1회만 실행)'):
+    with st.spinner('초기 데이터 로딩 및 AI 분석 모델 구동 중... (최초 1회)'):
         st.session_state.infra_gdf = load_infrastructure()
         st.session_state.estate_df = load_real_estate()
-        # Initialize grid cache variable
         st.session_state.last_grid_res = None
 
-# Check if Grid needs to be recalculated (Only when Resolution changes)
 if st.session_state.get('last_grid_res') != grid_res:
-    with st.spinner(f'격자 구조 재설정 중... ({grid_res}m)'):
+    with st.spinner(f'공간 인덱스 재계산 중... ({grid_res}m 단위)'):
         st.session_state.grid_gdf_base = calculate_base_scores(st.session_state.infra_gdf, grid_res)
         st.session_state.last_grid_res = grid_res
 
-# Access data from Session State
 infra_gdf = st.session_state.infra_gdf
 estate_df = st.session_state.estate_df
-grid_gdf = st.session_state.grid_gdf_base.copy() # Copy to prevent mutation affecting base cache
+grid_gdf = st.session_state.grid_gdf_base.copy()
 
 # --- Dynamic Scoring (Fast) ---
-# Calculate Weighted Total Score
+# Ensure columns exist (handling cases where data might be missing for some categories)
+for col in ['score_cafe', 'score_gym', 'score_convenience', 'score_safety', 'score_medical', 'score_life']:
+    if col not in grid_gdf.columns:
+        grid_gdf[col] = 0.0
+
 grid_gdf['total_score'] = (
     grid_gdf['score_cafe'] * w_cafe + 
     grid_gdf['score_gym'] * w_gym + 
-    grid_gdf['score_convenience'] * w_conv
+    grid_gdf['score_convenience'] * w_conv +
+    grid_gdf['score_safety'] * w_safe + 
+    grid_gdf['score_medical'] * w_med + 
+    grid_gdf['score_life'] * w_life
 )
 
-# --- Analysis: Assign Score to Real Estate Listings ---
-# For each estate, find the score of the nearest grid point
-# This is a quick lookup
+# --- Assign Scores to Real Estate ---
 grid_coords = list(zip(grid_gdf.geometry.x, grid_gdf.geometry.y))
 grid_tree = cKDTree(grid_coords)
 
 estate_coords = list(zip(estate_df['lon'], estate_df['lat']))
 dists, idxs = grid_tree.query(estate_coords, k=1)
 
+# Copy total score
 estate_df['seulsekwon_score'] = grid_gdf.iloc[idxs]['total_score'].values
+# Copy individual scores for radar chart later
+for col in ['score_cafe', 'score_gym', 'score_convenience', 'score_safety', 'score_medical', 'score_life']:
+     estate_df[col] = grid_gdf.iloc[idxs][col].values
 
-# Identify "Undervalued" properties
-# Simple logic: High Score, Low Rent
-# We divide into quadrants based on Median
-median_score = estate_df['seulsekwon_score'].median()
-median_rent = estate_df['rent_per_area'].median()
+# --- Recommendation Logic ---
+# Find "Best Value": Top 20% Score AND Bottom 40% Rent
+score_threshold = estate_df['seulsekwon_score'].quantile(0.8)
+rent_threshold = estate_df['rent_per_area'].quantile(0.4)
 
 def classify_value(row):
-    # Avoid zero score which messes up logic
-    if row['seulsekwon_score'] < 1:
-        return 'No Data'
-        
-    if row['seulsekwon_score'] >= median_score and row['rent_per_area'] < median_rent:
-        return '💎 Undervalued (Best Value)'
-    elif row['seulsekwon_score'] >= median_score and row['rent_per_area'] >= median_rent:
-        return '💰 High Value, High Price'
-    elif row['seulsekwon_score'] < median_score and row['rent_per_area'] < median_rent:
-        return '📉 Low Price'
+    if row['seulsekwon_score'] >= score_threshold and row['rent_per_area'] <= rent_threshold:
+        return '💎 숨은 명당 (강력 추천)'
+    elif row['seulsekwon_score'] >= score_threshold:
+        return '💰 프리미엄 (고득점/고가)'
+    elif row['rent_per_area'] <= rent_threshold:
+        return '📉 가성비 (저렴함)'
     else:
-        return '⚠️ Overpriced'
+        return '⚠️ 일반/고평가'
 
 estate_df['category'] = estate_df.apply(classify_value, axis=1)
 
 # --- Visualization ---
 
-col1, col2 = st.columns([1.5, 1])
+col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("🗺️ Seulsekwon Heatmap & Listings")
+    st.subheader("🗺️ 통합 슬세권 지수 히트맵")
     
-    # Base Map
     mean_lat, mean_lon = infra_gdf.geometry.y.mean(), infra_gdf.geometry.x.mean()
     m = folium.Map(location=[mean_lat, mean_lon], zoom_start=15, tiles='cartodbpositron')
     
-    # 1. Heatmap (Weighted Score)
+    # 1. Heatmap
     heat_data = grid_gdf[grid_gdf['total_score'] > 0][['lat', 'lon', 'total_score']].values.tolist()
-    HeatMap(heat_data, radius=15, blur=20, min_opacity=0.3, max_zoom=1).add_to(m)
+    HeatMap(heat_data, radius=15, blur=20, min_opacity=0.3, name='통합 슬세권 지수').add_to(m)
     
-    # 2. Real Estate Markers
-    # Color code by category
-    color_map = {
-        '💎 Undervalued (Best Value)': 'blue',
-        '💰 High Value, High Price': 'orange',
-        '📉 Low Price': 'gray',
-        '⚠️ Overpriced': 'red',
-        'No Data': 'black'
+    # 2. Markers (Facilities) - Clustered
+    # Toggleable Layers
+    fg_safety = folium.FeatureGroup(name="👮 안전 및 의료 시설")
+    
+    # Add Safety/Medical/Life markers
+    new_cats = ['safety', 'medical', 'life']
+    
+    # Icons mapping
+    icons = {
+        'cafe': 'coffee', 'gym': 'heart', 'convenience': 'shopping-cart',
+        'safety': 'shield', 'medical': 'plus', 'life': 'home'
+    }
+    colors = {
+        'cafe': 'red', 'gym': 'blue', 'convenience': 'green',
+        'safety': 'purple', 'medical': 'orange', 'life': 'cadetblue'
     }
     
-    for idx, row in estate_df.iterrows():
-        color = color_map.get(row['category'], 'black')
+    # Facilities Cluster
+    marker_cluster = MarkerCluster(name="주변 편의시설 (전체)").add_to(m)
+    
+    max_markers = 1000
+    count = 0
+    for row in infra_gdf.itertuples():
+        if count > max_markers: break
+        ftype = getattr(row, 'type', 'unknown')
         
-        folium.CircleMarker(
+        icon = icons.get(ftype, 'info-sign')
+        color = colors.get(ftype, 'gray')
+        store_name = getattr(row, '상호명', 'Store')
+        
+        # Translate key types for display
+        type_kr = {'cafe': '카페', 'gym': '운동시설', 'convenience': '편의점', 
+                   'safety': '안전시설', 'medical': '의료기관', 'life': '생활편의'}.get(ftype, ftype)
+        
+        folium.Marker(
+            location=[row.geometry.y, row.geometry.x],
+            popup=f"<b>{store_name}</b><br>분류: {type_kr}",
+            icon=folium.Icon(color=color, icon=icon, prefix='fa')
+        ).add_to(marker_cluster)
+        count += 1
+        
+    # 3. Estate Markers (Only Recommendations or High Value)
+    recommended = estate_df[estate_df['category'] == '💎 숨은 명당 (강력 추천)']
+    
+    for idx, row in recommended.iterrows():
+        folium.Marker(
             location=[row['lat'], row['lon']],
-            radius=6,
-            color=color,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.8,
-            popup=f"<b>{row['name']}</b><br>Score: {row['seulsekwon_score']:.1f}<br>Rent: {row['rent_per_area']:.1f}<br>{row['category']}"
+            popup=f"<b>💎 추천 매물</b><br>{row['name']}<br>점수: {row['seulsekwon_score']:.1f}점<br>월세: {row['rent_per_area']:.1f}만원",
+            icon=folium.Icon(color='darkblue', icon='star', prefix='fa')
         ).add_to(m)
         
+    folium.LayerControl().add_to(m)
     st_folium(m, width="100%", height=600)
 
 with col2:
-    st.subheader("📊 Business Insights")
+    st.subheader("📊 매물 추천 및 분석")
     
-    # correlation
-    corr = estate_df['seulsekwon_score'].corr(estate_df['rent_per_area'])
-    st.info(f"💡 Correlation between **Score** and **Rent**: **{corr:.2f}**")
+    st.markdown("#### 🏆 BEST 3 숨은 명당")
+    st.caption("해당 지역 상위 20% 점수이면서 임대료는 하위 40%인 알짜 매물입니다.")
     
-    # 3. Scatter Plot (Interactive)
-    # Using Altair
+    if not recommended.empty:
+        top3 = recommended.nlargest(3, 'seulsekwon_score')
+        for i, row in top3.iterrows():
+            st.success(f"**{row['name']}**\n"
+                       f"- 종합 점수: **{row['seulsekwon_score']:.1f}점**\n"
+                       f"- 월세 지표: **{row['rent_per_area']:.1f}**\n"
+                       f"- ✨ **강점**: 안전({row['score_safety']:.1f}), 의료({row['score_medical']:.1f})")
+    else:
+        st.warning("조건에 맞는 '숨은 명당'이 없습니다. 가중치를 조절해보세요.")
+        
+    st.divider()
+    
+    # Scatter Plot
     scatter = alt.Chart(estate_df).mark_circle(size=80).encode(
-        x=alt.X('seulsekwon_score', title='Seulsekwon Index (Score)'),
-        y=alt.Y('rent_per_area', title='Rent per Area (Simulated)'),
-        color=alt.Color('category', legend=alt.Legend(title="Evaluation")),
-        tooltip=['name', 'seulsekwon_score', 'rent_per_area', 'category', 'deposit']
+        x=alt.X('seulsekwon_score', title='통합 슬세권 지수 (점수)'),
+        y=alt.Y('rent_per_area', title='전용면적당 임대료 (단위:만원)'),
+        color=alt.Color('category', legend=alt.Legend(title="매물 등급")),
+        tooltip=[alt.Tooltip('name', title='매물명'), 
+                 alt.Tooltip('seulsekwon_score', title='종합점수', format='.1f'), 
+                 alt.Tooltip('rent_per_area', title='임대료', format='.1f'), 
+                 alt.Tooltip('category', title='등급')]
     ).interactive()
-    
     st.altair_chart(scatter, use_container_width=True)
     
-    # Radar Chart / Bar Chart for Infrastructure
-    st.markdown("### 🕸️ Infrastructure Breakdown")
-    st.caption("Balance of amenities for the top scoring location.")
-    
-    # Example: Top Score Listing
-    if not estate_df.empty:
-        top_listing = estate_df.loc[estate_df['seulsekwon_score'].idxmax()]
-        
-        # Radar Data
-        categories = ['Cafe', 'Gym', 'Convenience']
-        # Use Nearest Neighbor to find breakdown for this specific point
-        dist, specific_idx = grid_tree.query([[top_listing['lon'], top_listing['lat']]])
-        specific_grid_point = grid_gdf.iloc[specific_idx[0]]
-        
-        radar_data = pd.DataFrame({
-            'Category': categories,
-            'Score': [
-                specific_grid_point['score_cafe'], 
-                specific_grid_point['score_gym'], 
-                specific_grid_point['score_convenience']
-            ]
-        })
-        
-        # Simple Bar Chart as Radar is tricky in pure Altair without polar
-        bar = alt.Chart(radar_data).mark_bar().encode(
-            x='Category',
-            y='Score',
-            color='Category'
-        ).properties(title=f"Best Listing: {top_listing['name']}")
-        st.altair_chart(bar, use_container_width=True)
-
-st.success("Real-time Analysis Complete!")
+    # Correlation
+    corr = estate_df['seulsekwon_score'].corr(estate_df['rent_per_area'])
+    st.info(f"💡 점수와 임대료의 상관계수: **{corr:.2f}**")

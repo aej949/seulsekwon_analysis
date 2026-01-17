@@ -26,35 +26,37 @@
 ## 🚀 How to Run (실행 방법)
 
 ### 1. Prerequisites (준비물)
-파이썬 환경이 필요합니다. 아래 명령어로 의존성 패키지를 설치하세요.
+파이썬 환경이 필요합니다. 아래 명령어로 필수 라이브러리를 설치하세요.
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run Analysis (실행)
-메인 스크립트를 실행하면 데이터 생성(Mock Data 사용 가능), 점수 계산, 지도 생성이 자동으로 진행됩니다.
+### 2. Run Dashboard (대시보드 실행)
+Streamlit을 통해 인터랙티브 대시보드를 실행합니다.
 ```bash
-python main.py
+streamlit run streamlit_app.py
 ```
+실행 후 브라우저가 자동으로 열리며 `http://localhost:8501`에서 확인 가능합니다.
 
-### 3. Check Results (결과 확인)
-생성된 `seulsekwon_map.html` 파일을 웹 브라우저로 엽니다.
+## 📂 File Structure (파일 구조)
+이 저장소에 포함된 핵심 파일들은 다음과 같습니다. **이 파일들을 모두 GitHub에 올리시면 됩니다.**
 
-## 📂 File Structure
-```
-seulsekwon_analysis/
-├── algorithm.py        # KDTree 기반 거리 계산 및 점수 산출 로직
-├── data_processor.py   # 데이터 로딩, 전처리, Mock 데이터 생성
-├── visualization.py    # Folium 지도 시각화 및 마커 클러스터링
-├── main.py             # 전체 워크플로우 실행
-├── requirements.txt    # 필요 라이브러리 목록
-└── seulsekwon_map.html # 결과물 (생성됨)
-```
+| 파일명 | 설명 |
+|---|---|
+| **`streamlit_app.py`** | 🌟 **메인 파일**: 대시보드 UI 및 전체 로직 통합 |
+| `algorithm.py` | 🧠 **알고리즘**: 슬세권 지수 산출 및 KDTree 공간 연산 |
+| `data_processor.py` | 💾 **데이터 처리**: 공공데이터 로딩 및 안전/의료 Mock 데이터 생성 |
+| `requirements.txt` | 📦 **패키지**: 프로젝트 실행에 필요한 라이브러리 목록 |
+| `README.md` | 📖 **설명서**: 프로젝트 소개 및 실행 가이드 (현재 파일) |
+| `visualization.py` | 🎨 (Legacy) 정적 지도 생성 모듈 |
+| `main.py` | 🏗️ (Legacy) 정적 지도 생성 스크립트 |
 
-## 📊 Logic Details
-**Scoring Formula:**
-$$S(d) = \begin{cases} 10 & d \le 100m \\ \text{Linear Decay} & 100m < d < 1000m \\ 0 & d \ge 1000m \end{cases}$$
-- 각 격자점(Grid)에서 주변 시설물까지의 점수를 합산하여 최종 '슬세권 지수'를 도출합니다.
+## 📊 Logic Details (분석 로직)
+**통합 슬세권 지수 (Integrated Seulsekwon Index)**
+- **기본항목**: 카페, 헬스장, 편의점
+- **신규항목**: 👮안전(1.5배 가중치), 🏥의료(1.2배 가중치), 🧺생활편의
+- **알고리즘**: $$S(d) = \sum (Weight \times DistanceDecay(d))$$
+  - 모든 시설물에 대해 거리 기반 감쇠 함수를 적용하여 합산합니다.
 
 ---
 *Created by Antigravity*
