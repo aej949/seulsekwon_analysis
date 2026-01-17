@@ -317,58 +317,107 @@ with col_map:
     map_data = st_folium(m, height=600, key="map")
 
 with col_list:
-    st.subheader("📋 추천 매물 TOP 10")
+    tab_analysis, tab_list = st.tabs(["📊 상세 분석", "📋 매물 리스트"])
     
-    sort_opt = st.selectbox("정렬 기준", ["점수 높은 순", "가성비(CPI) 순", "월세 낮은 순"])
-    
-    # Filter visible
-    if map_data and map_data.get('bounds'):
-        b = map_data['bounds']
-        # Bounds: _southWest: {lat, lng}, _northEast: {lat, lng}
-        sw = b['_southWest']; ne = b['_northEast']
-        visible_estates = estates[
-            (estates['lat'] >= sw['lat']) & (estates['lat'] <= ne['lat']) &
-            (estates['lon'] >= sw['lng']) & (estates['lon'] <= ne['lng'])
-        ]
-    else:
-        visible_estates = estates # Default all
+    with tab_analysis:
+        st.markdown("### 🧬 라이프스타일 균형")
+        # 1. Radar Chart (User Weights Profile)
+        # Normalize weights to 0-1 or just show raw
+        r_df = pd.DataFrame({
+            'r': [w_safe, w_med, w_mobil, w_conv, w_cafe, w_health],
+            'theta': ['안전', '의료', '교통', '편의', '카페', '운동']
+        })
+        fig_r = px.line_polar(r_df, r='r', theta='theta', line_close=True)
+        fig_r.update_traces(fill='toself', line_color='#A020F0')
+        fig_r.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            polar=dict(
+                radialaxis=dict(visible=True, range=[0, 3], tickfont=dict(color='gray')),
+                bgcolor='rgba(255, 255, 255, 0.05)'
+            ),
+            font=dict(color='white'),
+            margin=dict(t=20, b=20, l=40, r=40)
+        )
+        st.plotly_chart(fig_r, use_container_width=True)
         
-    if visible_estates.empty:
-        st.warning("현재 화면 내 추천 매물이 없습니다.")
-    else:
-        # Sort
-        if sort_opt == "점수 높은 순":
-            visible_estates = visible_estates.sort_values(by='score', ascending=False)
-        elif sort_opt == "가성비(CPI) 순":
-            visible_estates = visible_estates.sort_values(by='cpi', ascending=False)
+        st.markdown("### 📈 월세 변동 추이 (Trend)")
+        # Mock Trend Data
+        dates = pd.date_range(start='2024-01-01', periods=12, freq='M')
+        base_p = avg_rent
+        trends = base_p + np.cumsum(np.random.normal(0, 0.2, 12))
+        fig_t = px.line(x=dates, y=trends, markers=True)
+        fig_t.update_layout(
+            xaxis_title=None, yaxis_title="평당 월세 (만 원)",
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white'),
+            margin=dict(t=10, b=10, l=10, r=10),
+            height=200
+        )
+        fig_t.update_traces(line_color='#00CC96')
+        st.plotly_chart(fig_t, use_container_width=True)
+        
+        st.markdown("### � 가성비 매트릭스")
+        fig_s = px.scatter(estates, x='rent_per_area', y='score', color='grade',
+                           color_discrete_map={'💎 Best': '#00CC96', 'Normal': '#636EFA'})
+        fig_s.update_layout(
+            xaxis_title="평당 월세", yaxis_title="슬세권 점수",
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white'),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(t=0, b=0, l=0, r=0),
+            height=250
+        )
+        st.plotly_chart(fig_s, use_container_width=True)
+
+    with tab_list:
+        st.caption(f"현재 지역 추천 매물: {len(estates)}개 중 Top 10")
+        
+        sort_opt = st.selectbox("정렬 기준", ["점수 높은 순", "가성비(CPI) 순", "월세 낮은 순"])
+        
+        # Filter visible logic
+        if map_data and map_data.get('bounds'):
+            b = map_data['bounds']
+            sw = b['_southWest']; ne = b['_northEast']
+            visible_estates = estates[
+                (estates['lat'] >= sw['lat']) & (estates['lat'] <= ne['lat']) &
+                (estates['lon'] >= sw['lng']) & (estates['lon'] <= ne['lng'])
+            ]
         else:
-            visible_estates = visible_estates.sort_values(by='rent_per_area', ascending=True)
+            visible_estates = estates # Default all
             
-        # List Cards
-        for i, row in visible_estates.head(10).iterrows():
-            score_col = "green" if row['score'] >= 80 else "orange"
-            with st.expander(f"[{row['score']:.0f}점] {row['name']}"):
-                st.markdown(f"**💰 평당 월세**: {row['rent_per_area']:.1f}만 원")
+        if visible_estates.empty:
+            st.info("지도 영역 내 매물이 없습니다. 지도를 이동해보세요.")
+        else:
+            # Sort
+            if sort_opt == "점수 높은 순":
+                visible_estates = visible_estates.sort_values(by='score', ascending=False)
+            elif sort_opt == "가성비(CPI) 순":
+                visible_estates = visible_estates.sort_values(by='cpi', ascending=False)
+            else:
+                visible_estates = visible_estates.sort_values(by='rent_per_area', ascending=True)
                 
-                # AI Reason Generation (Logic)
-                reasons = []
-                if w_safe >= 2.0: reas = "치안/안심"
-                elif w_health >= 2.0: reas = "운동/산책"
-                elif w_mobil >= 2.0: reas = "교통/이동"
-                elif w_cafe >= 2.0: reas = "카페/휴식"
-                elif w_conv >= 2.0: reas = "생활편의"
-                elif w_med >= 2.0: reas = "병의원"
-                else: reas = "균형잡힌 인프라"
-                
-                # Check distances (approx via mock)
-                # In real app, query KDTree. Here we sim.
-                if row['grade'] == '💎 Best':
-                    st.success(f"🏆 **AI 추천**: {reas} 접근성이 탁월하며 가성비가 최상위권입니다.")
-                else:
-                    st.info(f"💡 **AI 분석**: {reas} 환경이 우수합니다.")
-                
-                if st.button("📍 위치 보기", key=f"btn_{i}"):
-                    st.session_state.map_center = [row['lat'], row['lon']]
-                    st.rerun()
+            # List Cards
+            for i, row in visible_estates.head(10).iterrows():
+                badge = "💎" if row['grade'] == '💎 Best' else ""
+                with st.expander(f"{badge} [{row['score']:.0f}점] {row['name']}"):
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        st.markdown(f"**💰 {row['rent_per_area']:.1f}만 원** / 평")
+                    with c2:
+                        if st.button("📍이동", key=f"btn_{i}"):
+                            st.session_state.map_center = [row['lat'], row['lon']]
+                            st.rerun()
+                            
+                    # Contextual Reason
+                    reasons = []
+                    if w_safe >= 2: reasons.append("치안")
+                    if w_mobil >= 2: reasons.append("교통")
+                    if w_health >= 2: reasons.append("운동")
+                    reason_str = ", ".join(reasons) if reasons else "생활 편의"
+                    
+                    if row['grade'] == '💎 Best':
+                        st.success(f"**AI 추천**: {reason_str} 인프라가 훌륭하며 가성비가 최고입니다.")
+                    else:
+                        st.caption(f"**분석**: {reason_str} 접근성이 양호합니다.")
 
 st.caption("Data Source: 소상공인시장진흥공단(상권), 서울 열린데이터 광장(공공 인프라), 국토교통부(실거래가) | Powered by Antigravity")
