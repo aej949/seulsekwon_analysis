@@ -207,15 +207,15 @@ st.sidebar.markdown("### 🎨 범례 (Score Legend)")
 st.sidebar.markdown(
     """
     <div style="background-color: rgba(255,255,255,0.05); padding: 10px; border-radius: 5px; border: 1px solid #444;">
-        <div style="height: 15px; background: linear-gradient(to right, #00008b, #00ced1, #ffff00, #ff8c00, #ff0000); border-radius: 3px; margin-bottom: 5px;"></div>
+        <div style="height: 15px; background: linear-gradient(to right, #edf8b1, #7fcdbb, #2c7fb8, #253494); border-radius: 3px; margin-bottom: 5px;"></div>
         <div style="display: flex; justify-content: space-between; font-size: 11px; color: #DDD;">
             <span>Basic (0)</span>
             <span>Premium (100)</span>
         </div>
         <div style="font-size: 10px; color: #888; margin-top:5px; text-align:center;">
-           <span style="color:#00008b;">●</span> Low 
-           <span style="color:#ffff00;">●</span> Good 
-           <span style="color:#ff0000;">●</span> High
+           <span style="color:#edf8b1;">●</span> Low 
+           <span style="color:#2c7fb8;">●</span> Good 
+           <span style="color:#253494;">●</span> High
         </div>
     </div>
     """, unsafe_allow_html=True
@@ -231,6 +231,7 @@ st.sidebar.markdown(
     - **Real Estate**: 국토교통부 실거래가
     """
 )
+
 
 
 # 2. Data Loading & Calc
@@ -288,25 +289,33 @@ with col_map:
     # Map
     m = folium.Map(location=st.session_state.map_center, zoom_start=15, tiles='cartodbdark_matter')
     
-    # Heatmap
+    # 1. Heatmap (Cool YlGnBu Gradient)
     g = grid[grid['total_score']>0].copy()
     g['lat'] = g.geometry.y
     g['lon'] = g.geometry.x
-    # Gradient: Pale Yellow -> Orange -> Deep Red
-    hm_grad = {0.2: '#FFEDA0', 0.4: '#FEB24C', 0.6: '#FD8D3C', 0.8: '#FC4E2A', 1.0: '#BD0026'}
+    # YlGnBu Gradient
+    hm_grad = {0.1: '#edf8b1', 0.3: '#7fcdbb', 0.6: '#2c7fb8', 0.9: '#253494'}
     HeatMap(g[['lat','lon','total_score']].values.tolist(), 
-            radius=25, blur=15, min_opacity=0.1, max_zoom=13, gradient=hm_grad).add_to(m)
-    
+            radius=15, blur=20, min_opacity=0.2, max_zoom=13, gradient=hm_grad).add_to(m)
+
     # Helper for Distance
     def haversine(lat1, lon1, lat2, lon2):
-        R = 6371000 # Radius of Earth in meters
+        R = 6371000 
         phi1, phi2 = np.radians(lat1), np.radians(lat2)
         dphi = np.radians(lat2 - lat1)
         dlambda = np.radians(lon2 - lon1)
         a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
         return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
 
-    # Infra Markers (Clustered & Iconified & Smart Popup)
+    # Reference Marker (Home)
+    folium.Marker(
+        st.session_state.map_center,
+        icon=folium.Icon(color='beige', icon='home', prefix='fa', icon_color='black'),
+        popup="<b>분석 기준점 (Home)</b><br>거리 계산의 기준입니다.",
+        zIndexOffset=1000
+    ).add_to(m)
+
+    # 2. Infra Markers
     mcs = {
         'Safety': MarkerCluster(name='Safety (안전)', overlay=True, control=True, show=True),
         'Medical': MarkerCluster(name='Medical (의료)', overlay=True, control=True, show=True),
@@ -342,8 +351,7 @@ with col_map:
         if t in type_map:
             cat = type_map[t]
             cfg = cat_cfg.get(cat, {'icon':'info-sign', 'color':'gray'})
-            
-            # Walking Time Calc
+            # Time Calc
             dist_m = haversine(c_lat, c_lon, r.lat, r.lon)
             walk_min = int(dist_m / 80)
             
@@ -354,15 +362,15 @@ with col_map:
                 <div style="font-family:sans-serif; min-width:150px;">
                     <b>{r.name}</b><br>
                     <span style='color:grey; font-size:12px;'>{cat}</span><hr style="margin:5px 0;">
-                    📍 거리: <b>{int(dist_m)}m</b><br>
-                    🚶 도보: <b>약 {walk_min}분</b>
+                    🏠 기준점으로부터: <b>{int(dist_m)}m</b><br>
+                    🚶 도보 소요: <b>약 {walk_min}분</b>
                 </div>
                 """
             ).add_to(mcs[cat])
             
     for mc in mcs.values(): mc.add_to(m)
     
-    # 3. Gold Stars for Top 10 Est.
+    # Gold Stars
     top_10 = estates.nlargest(10, 'score')
     for _, e in top_10.iterrows():
         folium.Marker([e['lat'], e['lon']], 
@@ -370,7 +378,7 @@ with col_map:
             icon=folium.Icon(color='orange', icon='star', prefix='fa', icon_color='white')).add_to(m)
             
     folium.LayerControl().add_to(m)
-            
+    
     map_data = st_folium(m, height=700, key="map")
 
 with col_right:
