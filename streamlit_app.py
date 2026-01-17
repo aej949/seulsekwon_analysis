@@ -191,13 +191,34 @@ w_safe  = w_ui("👮 Safety (안전)", "CCTV, 경찰, 스마트폴", 'k_safe', 2
 w_med   = w_ui("🏥 Medical (의료)", "약국, 병원", 'k_med', 2)
 w_mobil = w_ui("🚲 Mobility (교통)", "따릉이, 지하철", 'k_mobil', 1)
 
+# Sidebar Formula & Legend
+st.sidebar.divider()
+st.sidebar.markdown("### 🧮 분석 방법론 (Methodology)")
+st.sidebar.latex(r'''
+S_{final} = \left( \frac{\sum w_i \cdot s_i}{\sum w_i \cdot 10} \right) \times 100
+''')
+st.sidebar.caption("거리 감쇠(Decay) 및 밀도 기반 100점 환산")
+
+st.sidebar.markdown("### 🎨 범례 (Score Legend)")
+st.sidebar.markdown(
+    """
+    <div style="background-color: #1E1E1E; padding: 10px; border-radius: 5px; border: 1px solid #333;">
+        <div style="height: 10px; background: linear-gradient(to right, #FFEDA0, #FEB24C, #FD8D3C, #FC4E2A, #BD0026); border-radius: 5px;"></div>
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #BBB; margin-top: 4px;">
+            <span>Low (0)</span>
+            <span>Premium (100)</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True
+)
+
 st.sidebar.divider()
 use_api = st.sidebar.checkbox("🌐 실시간 공공 데이터", value=False)
 st.sidebar.markdown(
     """
     **📊 Data Sources**
-    - **Commercial**: 소상공인시장진흥공단 상권정보
-    - **Public**: 서울 열린데이터 광장 (CCTV 등)
+    - **Commercial**: 소상공인시장진흥공단
+    - **Public**: 서울시 열린광장 (CCTV, 스마트폴)
     - **Real Estate**: 국토교통부 실거래가
     """
 )
@@ -257,30 +278,98 @@ with col_map:
     # Map
     m = folium.Map(location=st.session_state.map_center, zoom_start=15, tiles='cartodbdark_matter')
     
-    # Heatmap (Custom Gradient)
+    # 1. Heatmap (Premium Orange-Red Intensity)
     g = grid[grid['total_score']>0].copy()
     g['lat'] = g.geometry.y
     g['lon'] = g.geometry.x
-    hm_grad = {0.2: '#00008b', 0.4: '#00ced1', 0.6: '#ffff00', 0.8: '#ff8c00', 1.0: '#ff0000'}
+    # Gradient: Pale Yellow -> Orange -> Deep Red
+    hm_grad = {0.2: '#FFEDA0', 0.4: '#FEB24C', 0.6: '#FD8D3C', 0.8: '#FC4E2A', 1.0: '#BD0026'}
     HeatMap(g[['lat','lon','total_score']].values.tolist(), 
-            radius=25, blur=18, min_opacity=0.3, gradient=hm_grad).add_to(m)
+            radius=25, blur=20, min_opacity=0.1, max_zoom=13, gradient=hm_grad).add_to(m)
     
-    # Gold Stars for Top 10 Est.
+    # Helper for Distance
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371000 # Radius of Earth in meters
+        phi1, phi2 = np.radians(lat1), np.radians(lat2)
+        dphi = np.radians(lat2 - lat1)
+        dlambda = np.radians(lon2 - lon1)
+        a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
+        return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+
+    # 2. Infra Markers (Clustered & Iconified & Smart Popup)
+    mcs = {
+        'Safety': MarkerCluster(name='Safety (안전)', overlay=True, control=True, show=False),
+        'Medical': MarkerCluster(name='Medical (의료)', overlay=True, control=True, show=False),
+        'Mobility': MarkerCluster(name='Mobility (교통)', overlay=True, control=True, show=False),
+        'Life': MarkerCluster(name='Life (편의)', overlay=True, control=True, show=False),
+        'Cafe': MarkerCluster(name='Cafe (카페)', overlay=True, control=True, show=False),
+        'Health': MarkerCluster(name='Health (운동)', overlay=True, control=True, show=False)
+    }
+    
+    cat_cfg = {
+        'Cafe': {'icon':'coffee', 'color':'cadetblue'},
+        'Health': {'icon':'heartbeat', 'color':'purple'},
+        'Life': {'icon':'shopping-cart', 'color':'green'},
+        'Safety': {'icon':'shield', 'color':'darkblue'},
+        'Medical': {'icon':'medkit', 'color':'red'},
+        'Mobility': {'icon':'bicycle', 'color':'orange'}
+    }
+    
+    type_map = {
+        'safety': 'Safety', 'smart': 'Safety', 'police':'Safety', 'cctv':'Safety', 'smartpole':'Safety',
+        'medical': 'Medical', 'pharmacy':'Medical', 'hospital':'Medical',
+        'mobility': 'Mobility', 'bike':'Mobility',
+        'convenience': 'Life', 'life': 'Life', 'admin': 'Life', 'market': 'Life', 'delivery':'Life', 'kiosk':'Life',
+        'cafe': 'Cafe',
+        'gym': 'Health', 'healing': 'Health', 'park':'Health'
+    }
+    
+    infra_df = st.session_state.infra
+    c_lat, c_lon = st.session_state.map_center
+    
+    for r in infra_df.itertuples():
+        t = str(getattr(r, 'type', 'other')).lower()
+        if t in type_map:
+            cat = type_map[t]
+            cfg = cat_cfg.get(cat, {'icon':'info-sign', 'color':'gray'})
+            
+            # Walking Time Calc
+            dist_m = haversine(c_lat, c_lon, r.lat, r.lon)
+            walk_min = int(dist_m / 80)
+            
+            folium.Marker(
+                [r.lat, r.lon],
+                icon=folium.Icon(icon=cfg['icon'], color=cfg['color'], prefix='fa'),
+                popup=f"""
+                <div style="font-family:sans-serif; min-width:150px;">
+                    <b>{r.name}</b><br>
+                    <span style='color:grey; font-size:12px;'>{cat}</span><hr style="margin:5px 0;">
+                    📍 거리: <b>{int(dist_m)}m</b><br>
+                    🚶 도보: <b>약 {walk_min}분</b>
+                </div>
+                """
+            ).add_to(mcs[cat])
+            
+    for mc in mcs.values(): mc.add_to(m)
+    
+    # 3. Gold Stars for Top 10 Est.
     top_10 = estates.nlargest(10, 'score')
     for _, e in top_10.iterrows():
         folium.Marker([e['lat'], e['lon']], 
-            popup=f"<b>🏆 {e['name']}</b><br>Score: {e['score']:.1f}", 
+            popup=f"<b>🏆 {e['name']}</b><br>Score: {e['score']:.1f}<br>CPI: {e['cpi']:.2f}", 
             icon=folium.Icon(color='orange', icon='star', prefix='fa', icon_color='white')).add_to(m)
             
-    # CSS Legend
+    folium.LayerControl().add_to(m)
+            
+    # CSS Legend (Updated Colors)
     l_html = '''
     <div style="position: fixed; bottom: 50px; left: 50px; z-index: 1000; 
                 background-color: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; color: white; border: 1px solid grey;">
         <b>Premium Score Legend</b><br>
         <div style="margin-top:5px;">
-            <i style="background: red; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> High (80-100)<br>
-            <i style="background: yellow; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> Mid (40-79)<br>
-            <i style="background: blue; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> Low (0-39)
+            <i style="background: #BD0026; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> High (80-100)<br>
+            <i style="background: #FD8D3C; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> Mid (40-79)<br>
+            <i style="background: #FFEDA0; width: 10px; height: 10px; display: inline-block; border-radius:50%;"></i> Low (0-39)
         </div>
     </div>
     '''
