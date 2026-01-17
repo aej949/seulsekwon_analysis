@@ -50,11 +50,25 @@ def calculate_base_scores(_gdf, resolution):
     # Returns DataFrame with 'score_cafe', 'score_gym', 'score_conv' separated
     return calculate_seulsekwon_index(_gdf, grid_res_meters=resolution)
 
-# Load Data
-with st.spinner('Loading Data & Calculating Base Scores...'):
-    infra_gdf = load_infrastructure()
-    estate_df = load_real_estate()
-    grid_gdf = calculate_base_scores(infra_gdf, grid_res)
+# --- Data Management (Session State) ---
+# Check if data needs to be loaded (First run only)
+if 'infra_gdf' not in st.session_state:
+    with st.spinner('초기 데이터 로딩 및 분석 중입니다... (최초 1회만 실행)'):
+        st.session_state.infra_gdf = load_infrastructure()
+        st.session_state.estate_df = load_real_estate()
+        # Initialize grid cache variable
+        st.session_state.last_grid_res = None
+
+# Check if Grid needs to be recalculated (Only when Resolution changes)
+if st.session_state.get('last_grid_res') != grid_res:
+    with st.spinner(f'격자 구조 재설정 중... ({grid_res}m)'):
+        st.session_state.grid_gdf_base = calculate_base_scores(st.session_state.infra_gdf, grid_res)
+        st.session_state.last_grid_res = grid_res
+
+# Access data from Session State
+infra_gdf = st.session_state.infra_gdf
+estate_df = st.session_state.estate_df
+grid_gdf = st.session_state.grid_gdf_base.copy() # Copy to prevent mutation affecting base cache
 
 # --- Dynamic Scoring (Fast) ---
 # Calculate Weighted Total Score
