@@ -1,8 +1,10 @@
-pandas
-geopandas
-numpy
-shapely
-scipy
-folium
 streamlit
 streamlit-folium
+pandas
+geopandas
+folium
+plotly
+scipy
+requests
+pyproj
+numpy
