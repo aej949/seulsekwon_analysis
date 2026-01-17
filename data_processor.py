@@ -99,3 +99,32 @@ def preprocess_data(file_path=None, use_mock=False):
     )
     
     return gdf
+
+def generate_mock_estate_data(center_lat=37.4842, center_lon=126.9297, n_samples=100):
+    """
+    Generates mock real estate transaction data (Rent/Jeonse).
+    """
+    print("Generating mock real estate data...")
+    
+    lat_offsets = np.random.normal(0, 0.005, n_samples)
+    lon_offsets = np.random.normal(0, 0.005, n_samples)
+    
+    lats = center_lat + lat_offsets
+    lons = center_lon + lon_offsets
+    
+    # Mock Rent per Area (10,000 KRW / 3.3m2 approx or just arbitrary unit)
+    # Let's say monthly rent per 10m2 ranging from 5 to 20 (unit: 10k KRW)
+    rent_per_area = np.random.uniform(5, 20, n_samples)
+    
+    # Deposit (random)
+    deposit = np.random.uniform(1000, 10000, n_samples)
+    
+    df = pd.DataFrame({
+        'lat': lats,
+        'lon': lons,
+        'rent_per_area': rent_per_area, # 월세/면적
+        'deposit': deposit,
+        'name': [f"Estate_{i}" for i in range(n_samples)]
+    })
+    
+    return df

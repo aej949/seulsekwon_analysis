@@ -99,31 +99,17 @@ def calculate_seulsekwon_index(gdf, grid_res_meters=20):
         
         print(f"Calculating scores for {cat}...")
         
-        # Using query_ball_point might be slow if grid is huge and millions of pairs.
-        # Alternative: For each Amenity, rasterize its influence onto the grid.
-        # But user specifically asked for KDTree.
-        
-        # Let's use a standard approximation: Score based on NEAREST for each category?
-        # "Find points within radius immediately" -> query_ball_point.
-        # Let's stick to accumulating score from ALL facilities to show "richness".
-        
         # Batch processing to avoid memory issues
         chunk_size = 10000
         category_scores = np.zeros(len(grid_points))
         
         for i in range(0, len(grid_points), chunk_size):
             chunk = grid_points[i:i+chunk_size]
-            # specific radius search is feasible but getting distances for all is complex in one go with simple scipy
-            # kdtree.query_ball_point returns indices, not distances directly without extra step.
-            # kdtree.query returns nearest.
             
             # Hybrid approach for speed/demo:
-            # Calculate distance to NEAREST 5 items. Sum their scores (capped?).
-            # Or just Nearest 1.
-            # "S(d)" implies singular.
-            # "Sum [Cafe + Gym + Conv]" implies one score per category.
-            # Let's assume Score_Category = Score(Nearest_Item_In_Category).
-            # This is standard "Access" metric.
+            # We use nearest 1 neighbor for simplicity in this demo as per "S(d)" singular function implication
+            # Ideally for density we might sum multiple, but let's stick to Distance Decay to nearest facility
+            # as it aligns well with "How far is the nearest X?"
             
             dists, _ = tree.query(chunk, k=1) # Nearest neighbor
             
@@ -131,11 +117,41 @@ def calculate_seulsekwon_index(gdf, grid_res_meters=20):
             s = score_function(dists)
             category_scores[i:i+chunk_size] = s
             
-        total_scores += category_scores
-
+        # Store individual category scores
+        total_scores = total_scores + category_scores # Keep total for backward compatibility if needed, or just new cols
+        
+        # We will add columns dynamically
+        
     # Create result dataframe
     result_df = pd.DataFrame(grid_points, columns=['x', 'y'])
-    result_df['score'] = total_scores
+    
+    # Rerun logic to attach columns properly (iterating again or storing in dict above would be cleaner but let's just do it sequentially or fix logic)
+    # Refactoring slightly for cleanliness:
+    
+    score_dict = {}
+    
+    for cat in categories:
+        subset = gdf_proj[gdf_proj['type'] == cat]
+        scores = np.zeros(len(grid_points))
+        
+        if len(subset) > 0:
+            data_points = np.array(list(zip(subset.geometry.x, subset.geometry.y)))
+            tree = KDTree(data_points)
+            
+            for i in range(0, len(grid_points), chunk_size):
+                chunk = grid_points[i:i+chunk_size]
+                dists, _ = tree.query(chunk, k=1)
+                scores[i:i+chunk_size] = score_function(dists)
+        
+        score_dict[f'score_{cat}'] = scores
+
+    # Combine into DF
+    result_df = pd.DataFrame(grid_points, columns=['x', 'y'])
+    for cat, s in score_dict.items():
+        result_df[cat] = s
+        
+    # Calculate default total (equal weights)
+    result_df['score'] = result_df[[c for c in result_df.columns if 'score_' in c]].sum(axis=1)
     
     # Convert back to Lat/Lon for visualization (EPSG:4326)
     gdf_grid = gpd.GeoDataFrame(
