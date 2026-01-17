@@ -1,8 +1,8 @@
 pandas
 geopandas
+numpy
+shapely
 scipy
 folium
-shapely
-numpy
-matplotlib
-branca
+streamlit
+streamlit-folium
