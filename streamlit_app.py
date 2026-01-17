@@ -289,16 +289,15 @@ with col_map:
     # Map
     m = folium.Map(location=st.session_state.map_center, zoom_start=15, tiles='cartodbdark_matter')
     
-    # 1. Heatmap (Cool YlGnBu Gradient)
+    # Heatmap (YlGnBu)
     g = grid[grid['total_score']>0].copy()
     g['lat'] = g.geometry.y
     g['lon'] = g.geometry.x
-    # YlGnBu Gradient
     hm_grad = {0.1: '#edf8b1', 0.3: '#7fcdbb', 0.6: '#2c7fb8', 0.9: '#253494'}
     HeatMap(g[['lat','lon','total_score']].values.tolist(), 
             radius=15, blur=20, min_opacity=0.2, max_zoom=13, gradient=hm_grad).add_to(m)
 
-    # Helper for Distance
+    # Helper
     def haversine(lat1, lon1, lat2, lon2):
         R = 6371000 
         phi1, phi2 = np.radians(lat1), np.radians(lat2)
@@ -307,15 +306,7 @@ with col_map:
         a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2) * np.sin(dlambda/2)**2
         return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
 
-    # Reference Marker (Home)
-    folium.Marker(
-        st.session_state.map_center,
-        icon=folium.Icon(color='beige', icon='home', prefix='fa', icon_color='black'),
-        popup="<b>분석 기준점 (Home)</b><br>거리 계산의 기준입니다.",
-        zIndexOffset=1000
-    ).add_to(m)
-
-    # 2. Infra Markers
+    # Infra Markers
     mcs = {
         'Safety': MarkerCluster(name='Safety (안전)', overlay=True, control=True, show=True),
         'Medical': MarkerCluster(name='Medical (의료)', overlay=True, control=True, show=True),
@@ -344,29 +335,49 @@ with col_map:
     }
     
     infra_df = st.session_state.infra
-    c_lat, c_lon = st.session_state.map_center
+    
+    # Robust KDTree
+    e_coords = list(zip(estates.lat, estates.lon))
+    e_tree = cKDTree(e_coords) if len(e_coords) > 0 else None
     
     for r in infra_df.itertuples():
         t = str(getattr(r, 'type', 'other')).lower()
         if t in type_map:
-            cat = type_map[t]
-            cfg = cat_cfg.get(cat, {'icon':'info-sign', 'color':'gray'})
-            # Time Calc
-            dist_m = haversine(c_lat, c_lon, r.lat, r.lon)
-            walk_min = int(dist_m / 80)
-            
-            folium.Marker(
-                [r.lat, r.lon],
-                icon=folium.Icon(icon=cfg['icon'], color=cfg['color'], prefix='fa'),
-                popup=f"""
-                <div style="font-family:sans-serif; min-width:150px;">
-                    <b>{r.name}</b><br>
-                    <span style='color:grey; font-size:12px;'>{cat}</span><hr style="margin:5px 0;">
-                    🏠 기준점으로부터: <b>{int(dist_m)}m</b><br>
-                    🚶 도보 소요: <b>약 {walk_min}분</b>
-                </div>
-                """
-            ).add_to(mcs[cat])
+            try:
+                if pd.isna(r.lat) or pd.isna(r.lon): continue
+                
+                cat = type_map[t]
+                cfg = cat_cfg.get(cat, {'icon':'info-sign', 'color':'gray'})
+                
+                meta_txt = "반경 500m 추천 매물 없음"
+                if e_tree:
+                    dists, indices = e_tree.query([r.lat, r.lon], k=5)
+                    if not isinstance(indices, (list, np.ndarray)): 
+                        indices = [indices]
+                        
+                    candidates = []
+                    for idx in indices:
+                        if idx >= len(estates): continue
+                        est = estates.iloc[idx]
+                        d_m = haversine(est.lat, est.lon, r.lat, r.lon)
+                        if d_m <= 500:
+                            candidates.append((d_m, est['name'], max(1, int(d_m/80))))
+                    
+                    if candidates:
+                        candidates.sort()
+                        list_items = ""
+                        # Renamed 'm' to 'mins' to avoid shadowing the Map object 'm'
+                        for d, n, mins in candidates[:3]: # Top 3
+                            list_items += f"<li style='margin-bottom:2px;'>{n}: {int(d)}m (약 {mins}분)</li>"
+                        meta_txt = f"<b>🔎 주변 500m 연동:</b><ul style='margin:5px 0; padding-left:15px; font-size:11px;'>{list_items}</ul>"
+
+                folium.Marker(
+                    [r.lat, r.lon],
+                    icon=folium.Icon(icon=cfg['icon'], color=cfg['color'], prefix='fa'),
+                    popup=folium.Popup(f"""<div style="font-family:sans-serif; min-width:180px;"><b>{r.name}</b><br><span style='color:grey; font-size:12px;'>{cat}</span><hr style="margin:5px 0;">{meta_txt}</div>""", max_width=300)
+                ).add_to(mcs[cat])
+            except Exception:
+                continue
             
     for mc in mcs.values(): mc.add_to(m)
     
@@ -391,19 +402,19 @@ with col_right:
     st.markdown("##### 🧬 라이프스타일 매칭")
     r_df = pd.DataFrame({
         'r': [w_safe, w_med, w_mobil, w_conv, w_cafe, w_health],
-        'theta': ['안전', '의료', '교통', '편의', '카페', '운동']
+        'theta': ['👮 안전', '🏥 의료', '🚲 교통', '🏪 편의', '☕ 카페', '🏋️ 운동']
     })
     fig_r = px.line_polar(r_df, r='r', theta='theta', line_close=True)
     fig_r.update_traces(fill='toself', line_color='#FFD700')
     fig_r.update_layout(
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 3], showticklabels=False),
+            radialaxis=dict(visible=True, range=[0, 3], showticklabels=True, tickfont=dict(color='gray', size=10)),
             bgcolor='rgba(255, 255, 255, 0.05)'
         ),
-        font=dict(color='white'),
-        margin=dict(t=10, b=10, l=30, r=30),
-        height=200
+        font=dict(color='white', size=12),
+        margin=dict(t=40, b=40, l=50, r=50),
+        height=250
     )
     st.plotly_chart(fig_r, use_container_width=True)
     
