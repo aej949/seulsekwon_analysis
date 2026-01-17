@@ -118,10 +118,11 @@ def calculate_seulsekwon_index(gdf, grid_res=30, max_dist=1000):
     xx, yy = np.meshgrid(x_rng, y_rng)
     grid_points = np.c_[xx.ravel(), yy.ravel()]
     
-    # Rarity Weights (Scarcity)
+    # Tier Weights (Extreme Differentiation)
     rarity = {
-        'cafe': 0.6, 'convenience': 0.6, 'life': 0.8, 'health': 1.0,
-        'mobility': 1.2, 'medical': 2.0, 'safety': 2.0 
+        'cafe': 0.3, 'convenience': 0.3,  
+        'life': 1.5, 'health': 2.0, 'mobility': 2.0,
+        'medical': 6.0, 'safety': 6.0    
     }
     
     mapping = {
@@ -134,48 +135,32 @@ def calculate_seulsekwon_index(gdf, grid_res=30, max_dist=1000):
     }
     
     score_dict = {}
-    
-    # Pre-filter categories to avoid repeated string matching
     for cat_key, sub_types in mapping.items():
         subset = gdf_proj[gdf_proj['type'].isin(sub_types)]
-        
-        # Calculate Density Score
         scores = np.zeros(len(grid_points))
         if not subset.empty:
             coords = np.array(list(zip(subset.geometry.x, subset.geometry.y)))
             tree = KDTree(coords)
             
-            # Query multiple neighbors (k=15) for density saturation
-            cols = 10000
-            for i in range(0, len(grid_points), cols):
-                pts = grid_points[i:i+cols]
-                # k=15 to capture 'cluster' effect
-                dists, _ = tree.query(pts, k=15) 
-                
-                # Handle single neighbor case (k=1 output shape diff) - not issue here with fixed k=15
-                if dists.ndim == 1: dists = dists.reshape(-1, 1)
-                
-                # Linear Decay Score: 10 pts at 0m -> 0 pts at max_dist
-                # Mask out far items
-                valid_mask = dists < max_dist
-                raw_s = np.zeros_like(dists)
-                raw_s[valid_mask] = 10 * (1 - dists[valid_mask]/max_dist)
-                
-                # Sum density
-                sum_s = np.sum(raw_s, axis=1)
-                
-                # Log Saturation: ln(1 + score)
-                # This prevents infinite growth for dense areas (e.g., 50 cafes)
-                sat_s = np.log1p(sum_s)
-                
-                # Apply Rarity Weight
-                scores[i:i+cols] = sat_s * rarity.get(cat_key, 1.0)
+            # Sharp Decay (150m lambda)
+            lambda_k = 150.0 
+            dists, _ = tree.query(grid_points, k=10)
+            if dists.ndim == 1: dists = dists.reshape(-1, 1)
+            
+            # Exp Decay + Log Saturation
+            raw_s = np.exp(-dists / lambda_k)
+            cat_score = np.log1p(np.sum(raw_s, axis=1))
+            
+            # Normalize Category Score strictly to 0-1
+            if cat_score.max() > cat_score.min():
+                cat_score = (cat_score - cat_score.min()) / (cat_score.max() - cat_score.min())
+            
+            scores = cat_score * rarity.get(cat_key, 1.0)
                 
         score_dict[f'score_{cat_key}'] = scores
 
     res_df = pd.DataFrame(grid_points, columns=['x','y'])
     for k, v in score_dict.items(): res_df[k] = v
-    
     gdf_grid = gpd.GeoDataFrame(res_df, geometry=gpd.points_from_xy(res_df.x, res_df.y), crs="EPSG:32652")
     return gdf_grid.to_crs(epsg=4326)
 
@@ -204,7 +189,7 @@ with c_p2:
     if st.button("🏠 집순이"): set_weights(2, 1, 3, 1, 1, 1)
 
 st.sidebar.divider()
-st.sidebar.markdown("### ⚖️ 상세 가중치 설정")
+st.sidebar.markdown("### ⚖️ 인프라 중요도 (Tier)")
 w_opts = {k: v for v, k in enumerate([0.0, 1.0, 2.0, 3.0]) for k in [w_keys_list[v]]} 
 
 def w_ui(lbl, help_txt, key, def_idx=1): 
@@ -212,21 +197,20 @@ def w_ui(lbl, help_txt, key, def_idx=1):
     val = st.sidebar.select_slider(lbl, options=w_keys_list, key=key, help=help_txt)
     return w_opts[val]
 
-# Updated Defaults: Cafe/Conv (Low), Safe/Med (High)
-w_cafe  = w_ui("☕ Food & Cafe", "카페, 디저트 (흔함, 가중치 낮음)", 'k_cafe', 1)
-w_health= w_ui("🏋️ Health & Sports", "헬스, 공원", 'k_health', 1)
-w_conv  = w_ui("🏪 Convenience", "편의점, 마트 (흔함, 가중치 낮음)", 'k_conv', 1)
-w_safe  = w_ui("👮 Safety (안전)", "CCTV, 경찰 (희소, 가중치 높음)", 'k_safe', 3)
-w_med   = w_ui("🏥 Medical (의료)", "약국, 병원 (희소, 가중치 높음)", 'k_med', 3)
-w_mobil = w_ui("🚲 Mobility (교통)", "따릉이, 지하철", 'k_mobil', 2)
+w_cafe  = w_ui("Tier 3: 편의/카페", "포화 상태 (0.5x) - 많아도 큰 이점 없음", 'k_cafe', 1)
+w_conv  = w_ui("Tier 3: 마트/시장", "포화 상태 (0.5x)", 'k_conv', 1)
+w_health= w_ui("Tier 2: 운동/산책", "삶의 질 (2.0x)", 'k_health', 1)
+w_mobil = w_ui("Tier 2: 교통/이동", "삶의 질 (2.0x)", 'k_mobil', 2)
+w_safe  = w_ui("Tier 1: 치안 (Safety)", "필수/희소 (5.0x) - 점수 결정적 요인", 'k_safe', 3)
+w_med   = w_ui("Tier 1: 의료 (Medical)", "필수/희소 (5.0x) - 점수 결정적 요인", 'k_med', 3)
 
 # Sidebar Formula & Legend
 st.sidebar.divider()
-st.sidebar.markdown("### 🧮 분석 방법론 (Methodology)")
+st.sidebar.markdown("### 🧮 분석 방법론 (Exp Decay)")
 st.sidebar.latex(r'''
-S_{cat} = W_{rare} \cdot \ln\left(1 + \sum_{i=1}^{k} \max(0, 10(1 - \frac{d_i}{D_{max}}))\right)
+S_{cat} = W_{tier} \cdot \ln\left(1 + \sum 10 \cdot e^{-\frac{dist}{200}}\right)
 ''')
-st.sidebar.caption("희소성 가중치(Rarity) + 로그 포화(Saturation) + 거리 감쇠(Decay)")
+st.sidebar.caption("지수 감쇠(300m↓) + Tier 가중치(5배) + 로그 포화")
 
 # Debug Info
 infra_count = len(st.session_state.infra) if 'infra' in st.session_state else 0
@@ -286,8 +270,8 @@ current_grid = st.session_state.get('grid', pd.DataFrame())
 is_outdated = current_grid.empty or any(c not in current_grid.columns for c in required_cols)
 
 if st.session_state.get('last_rad') != 800 or is_outdated:
-    with st.spinner("AI 공간 분석 수행 중... (Algorithm Update v2)"):
-        st.session_state.grid = compute_index(st.session_state.infra, 800, _version=2)
+    with st.spinner("AI 공간 분석 수행 중... (Algorithm Update v4)"):
+        st.session_state.grid = compute_index(st.session_state.infra, 800, _version=4)
         st.session_state.last_rad = 800
 
 # Aggregate Scores (Log-based + Rarity)
@@ -310,12 +294,8 @@ raw_score = (
     s_mobil * w_mobil
 )
 
-# Normalize to 0-100 (Min-Max Scaling) for maximum differentiation
-min_s, max_s = raw_score.min(), raw_score.max()
-if max_s > min_s:
-    grid['total_score'] = (raw_score - min_s) / (max_s - min_s) * 100
-else:
-    grid['total_score'] = raw_score * 0
+# Normalize to Percentile Rank (0-100)
+grid['total_score'] = raw_score.rank(pct=True) * 100
 
 estates = st.session_state.estates.copy()
 grid_tree = cKDTree(list(zip(grid.geometry.x, grid.geometry.y)))
@@ -337,11 +317,11 @@ with col_map:
     # Map
     m = folium.Map(location=st.session_state.map_center, zoom_start=15, tiles='cartodbdark_matter')
     
-    # Heatmap (YlGnBu)
+    # Heatmap (Rank-based Gradient)
     g = grid[grid['total_score']>0].copy()
     g['lat'] = g.geometry.y
     g['lon'] = g.geometry.x
-    hm_grad = {0.1: '#edf8b1', 0.3: '#7fcdbb', 0.6: '#2c7fb8', 0.9: '#253494'}
+    hm_grad = {0.2: '#f7fbff', 0.5: '#abd9e9', 0.8: '#2c7fb8', 0.95: '#d73027'}
     HeatMap(g[['lat','lon','total_score']].values.tolist(), 
             radius=15, blur=20, min_opacity=0.2, max_zoom=13, gradient=hm_grad).add_to(m)
 
